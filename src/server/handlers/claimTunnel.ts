@@ -3,6 +3,7 @@ import { ClaimTunnelResponse } from 'src/proto/api'
 import { getApm } from 'src/server/utils/apm'
 import { assertTranscriptsMatch, assertValidClaimRequest } from 'src/server/utils/assert-valid-claim-request'
 import { getAttestorAddress, signAsAttestor } from 'src/server/utils/generics'
+import { processClaim } from 'src/server/processors/process-claim'
 import { RPCHandler } from 'src/types'
 import { AttestorError, createSignDataForClaim, getIdentifierFromClaimInfo, unixTimestampSeconds } from 'src/utils'
 
@@ -69,6 +70,53 @@ export const claimTunnel: RPCHandler<'claimTunnel'> = async(
 				identifier: getIdentifierFromClaimInfo(claim),
 				// hardcode for compatibility with V1 claims
 				epoch: 1
+			}
+
+			// Check if a processor was provided
+			const processorJson = claimRequest.processor
+
+			logger.debug({ hasProcessor: !!processorJson }, 'Checking for processor')
+
+			if(processorJson) {
+				const processTx = getApm()
+					?.startTransaction('processClaim', { childOf: tx })
+
+				try {
+					// Parse the processor configuration
+					const processor = JSON.parse(processorJson)
+
+					const processedData = await processClaim(
+						{
+							claim: res.claim,
+							processor
+						},
+						client.metadata.signatureType,
+						logger
+					)
+
+					if(processedData) {
+						logger.info({
+							claimId: processedData.claimId,
+							valueCount: processedData.values.length,
+							processorProviderHash: processedData.processorProviderHash
+						}, 'Claim processed successfully')
+
+						// Set processed data in the protobuf field
+						res.processedData = {
+							claimId: processedData.claimId,
+							values: processedData.values.map(String),
+							processorProviderHash: processedData.processorProviderHash,
+							signature: processedData.signature,
+							attestorAddress: processedData.attestorAddress,
+							provider: processedData.provider
+						}
+					}
+				} catch(err) {
+					logger.error({ err }, 'Error processing claim')
+					processTx?.setOutcome('failure')
+				} finally {
+					processTx?.end()
+				}
 			}
 		} catch(err) {
 			assertTx?.setOutcome('failure')

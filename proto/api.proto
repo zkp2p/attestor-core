@@ -276,6 +276,12 @@ message ClaimTunnelRequest {
 	/** server and client fixed IVs needed for ZK validation*/
 	bytes fixedServerIV = 6;
 	bytes fixedClientIV = 7;
+	
+	/**
+	 * Optional declarative processor configuration for secure data transformation
+	 * JSON-serialized DeclarativeProcessor object
+	 */
+	optional string processor = 8;
 
 	message Signatures {
 		/**
@@ -294,6 +300,35 @@ message ClaimTunnelRequest {
 	}
 }
 
+message ProcessedClaimData {
+	/**
+	 * The claim identifier (user-specific)
+	 */
+	string claimId = 1;
+	/**
+	 * Array of processed values extracted by the processor function
+	 */
+	repeated string values = 2;
+	/**
+	 * Single hash binding processor to provider (NOT user-specific)
+	 * Hash of (providerTemplateHash + processorHash)
+	 * Smart contracts only need to verify this ONE hash
+	 */
+	string processorProviderHash = 3;
+	/**
+	 * Attestor's signature over (claimId + processorProviderHash + values)
+	 */
+	bytes signature = 4;
+	/**
+	 * Attestor address that signed the processed data
+	 */
+	string attestorAddress = 5;
+	/**
+	 * Provider name
+	 */
+	string provider = 6;
+}
+
 message ClaimTunnelResponse {
 	/**
 	 * The original request that was made to claim the tunnel
@@ -304,6 +339,10 @@ message ClaimTunnelResponse {
 		ErrorData error = 3;
 	}
 	Signatures signatures = 4;
+	/**
+	 * Optional processed data if a processor function was provided
+	 */
+	ProcessedClaimData processedData = 5;
 
 	message Signatures {
 		/**

@@ -1,5 +1,6 @@
 import type { ProviderClaimData } from 'src/proto/api'
 import type { IAttestorClient, IAttestorClientInitParams } from 'src/types/client'
+import type { DeclarativeProcessor } from 'src/types/declarative-processor'
 import type { CompleteTLSPacket, Logger } from 'src/types/general'
 import type { ProofGenerationStep, ProviderName, ProviderParams, ProviderSecretParams } from 'src/types/providers'
 import type { Transcript } from 'src/types/tunnel'
@@ -76,4 +77,11 @@ export type CreateClaimOnAttestorOpts<N extends ProviderName> = {
 	 * For example: "domain.com" -> "dv4Nrgtr"
 	 */
 	updateParametersFromOprfData?: boolean
+
+	/**
+	 * Optional declarative processor to transform the claim data
+	 * after verification. The processor configuration will be executed
+	 * securely without eval() and its hash will be included in the attestor's signature.
+	 */
+	processor?: DeclarativeProcessor
 } & PrepareZKProofsBaseOpts

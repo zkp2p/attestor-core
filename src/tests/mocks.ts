@@ -1,4 +1,11 @@
+import { Wallet } from 'ethers'
 import type { preparePacketsForReveal } from 'src/utils/prepare-packets'
+
+// Set up a test private key if not already set
+if(!process.env.PRIVATE_KEY) {
+	const testWallet = Wallet.createRandom()
+	process.env.PRIVATE_KEY = testWallet.privateKey
+}
 
 /**
  * Spies on the preparePacketsForReveal function
