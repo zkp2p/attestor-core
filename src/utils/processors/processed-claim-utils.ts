@@ -1,5 +1,5 @@
 import { utils } from 'ethers'
-import { DeclarativeProcessor } from 'src/types/declarative-processor'
+import { DeclarativeProcessor, OutputSpec } from 'src/types/declarative-processor'
 import { canonicalStringify } from 'src/utils/claims'
 
 /**
@@ -18,13 +18,15 @@ function strToUint8Array(str: string): Uint8Array {
  * a simple whitelist of approved processor-provider pairs
  *
  * @param providerHash Hash of the provider template/schema
- * @param processorHash Hash of the processor function
+ * @param processor The declarative processor
  * @returns Single hash binding processor to provider
  */
 export function createProcessorProviderHash(
 	providerHash: string,
-	processorHash: string
+	processor: DeclarativeProcessor
 ): string {
+	const processorStr = canonicalStringify(processor)
+	const processorHash = utils.keccak256(strToUint8Array(processorStr)).toLowerCase()
 	const compositeStr = `${providerHash}\n${processorHash}`
 
 	return utils.keccak256(
@@ -54,33 +56,34 @@ export function createProcessedClaimSignData(params: {
 }
 
 /**
- * Creates a deterministic hash of a declarative processor
- * This ensures the same processor always produces the same hash
+ * Encodes values with ABI encoding and returns keccak256 hash
+ * Encodes values as a single array with processorProviderHash at index 0
+ * Uses ABI encoding and keccak256 for efficient on-chain verification
  *
- * @param processor The declarative processor to hash
- * @returns Hex string hash of the processor
+ * @param params Parameters for encoding and hashing
+ * @returns Keccak256 hash of ABI-encoded data
  */
-export function hashDeclarativeProcessor(processor: DeclarativeProcessor): string {
-	const processorStr = canonicalStringify(processor)
-	return utils.keccak256(strToUint8Array(processorStr)).toLowerCase()
+export function encodeAndHash(params: {
+	processorProviderHash: string
+	values: any[]
+	outputs: OutputSpec[]
+}): string {
+	// Extract EVM types from outputs
+	const evmTypes = params.outputs.map(output => output.type)
+
+	// Create combined array with processorProviderHash at index 0
+	const combinedValues = [params.processorProviderHash, ...params.values]
+
+	// Create combined types array with bytes32 at index 0 for the hash
+	const combinedTypes = ['bytes32', ...evmTypes]
+
+	// ABI encode the data as a single array
+	const encoded = utils.defaultAbiCoder.encode(
+		combinedTypes,
+		combinedValues
+	)
+
+	// Return keccak256 hash
+	return utils.keccak256(encoded)
 }
 
-const processorProviderRegistry = new Map<string, DeclarativeProcessor>()
-
-/**
- * Register a processor for a specific provider
- * @param provider Provider name
- * @param processor Declarative processor
- */
-export function setProviderProcessor(provider: string, processor: DeclarativeProcessor): void {
-	processorProviderRegistry.set(provider, processor)
-}
-
-/**
- * Get processor for a provider
- * @param provider Provider name
- * @returns Processor if registered, undefined otherwise
- */
-export function getProviderProcessor(provider: string): DeclarativeProcessor | undefined {
-	return processorProviderRegistry.get(provider)
-}

@@ -302,31 +302,32 @@ message ClaimTunnelRequest {
 
 message ProcessedClaimData {
 	/**
-	 * The claim identifier (user-specific)
+	 * The original verified claim
 	 */
-	string claimId = 1;
+	ProviderClaimData claim = 1;
 	/**
-	 * Array of processed values extracted by the processor function
+	 * Signature over the message hash
 	 */
-	repeated string values = 2;
+	bytes signature = 2;
 	/**
-	 * Single hash binding processor to provider (NOT user-specific)
-	 * Hash of (providerTemplateHash + processorHash)
-	 * Smart contracts only need to verify this ONE hash
+	 * Output specifications from the processor
 	 */
-	string processorProviderHash = 3;
+	repeated OutputSpec outputs = 3;
 	/**
-	 * Attestor's signature over (claimId + processorProviderHash + values)
+	 * Attestor address that signed
 	 */
-	bytes signature = 4;
+	string attestorAddress = 4;
+}
+
+message OutputSpec {
 	/**
-	 * Attestor address that signed the processed data
+	 * Variable name to output
 	 */
-	string attestorAddress = 5;
+	string name = 1;
 	/**
-	 * Provider name
+	 * EVM type for smart contract encoding
 	 */
-	string provider = 6;
+	string type = 2;
 }
 
 message ClaimTunnelResponse {

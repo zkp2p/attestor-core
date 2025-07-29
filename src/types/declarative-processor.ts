@@ -43,31 +43,6 @@ export interface TransformOperation {
   [key: string]: any
 }
 
-/**
- * Extraction rule for a single value
- */
-export interface ExtractionRule {
-  /**
-   * JSONPath or array of paths to try (first non-null wins)
-   */
-  path?: string
-  paths?: string[]
-
-  /**
-   * Default value if extraction returns null/undefined
-   */
-  default?: any
-
-  /**
-   * Optional regex to apply after extraction
-   */
-  regex?: string
-
-  /**
-   * Regex group to extract (default: 1)
-   */
-  regexGroup?: number
-}
 
 /**
  * Transform rule for processing extracted values
@@ -103,7 +78,6 @@ export interface ConditionalExpression {
   contains?: string
   startsWith?: string
   endsWith?: string
-  matches?: string // regex
 
   and?: ConditionalExpression[]
   or?: ConditionalExpression[]
@@ -121,6 +95,16 @@ export interface ConditionalTransform {
 }
 
 /**
+ * Output specification combining variable name and EVM type
+ */
+export interface OutputSpec {
+  /** Variable name to output */
+  name: string
+  /** EVM type for smart contract encoding */
+  type: string
+}
+
+/**
  * Main declarative processor structure
  */
 export interface DeclarativeProcessor {
@@ -130,16 +114,11 @@ export interface DeclarativeProcessor {
   version: ProcessorVersion
 
   /**
-   * Optional description for documentation
-   */
-  description?: string
-
-  /**
    * Extract phase: pull values from the claim using JSONPath
-   * Key is the variable name, value is the extraction rule
+   * Key is the variable name, value is the JSONPath string
    */
   extract: {
-    [variableName: string]: string | ExtractionRule
+    [variableName: string]: string
   }
 
   /**
@@ -151,35 +130,11 @@ export interface DeclarativeProcessor {
   }
 
   /**
-   * Output phase: specify which variables to include in final array
+   * Output specification combining variable names and their EVM types
    * Order matters - this defines the output array structure
+   * Common types: uint256, uint128, uint64, uint32, uint16, uint8, int256, address, bytes32, bool, string
    */
-  output: string[]
-
-  /**
-   * Optional metadata for validation/optimization
-   */
-  metadata?: {
-    /**
-     * Expected input schema for validation
-     */
-    inputSchema?: any
-
-    /**
-     * Performance hints
-     */
-    hints?: {
-      /**
-       * Maximum expected claim size in bytes
-       */
-      maxClaimSize?: number
-
-      /**
-       * Expected execution time in ms
-       */
-      expectedTimeMs?: number
-    }
-  }
+  outputs: OutputSpec[]
 }
 
 /**
@@ -253,7 +208,11 @@ export function isDeclarativeProcessor(value: any): value is DeclarativeProcesso
     value !== null &&
     value.version === '1.0.0' &&
     typeof value.extract === 'object' &&
-    Array.isArray(value.output)
+    Array.isArray(value.outputs) &&
+    value.outputs.every((o: any) => typeof o === 'object' &&
+      typeof o.name === 'string' &&
+      typeof o.type === 'string'
+    )
 	)
 }
 
@@ -266,20 +225,14 @@ export type ProcessedValue = string | number | boolean
  * Processed claim data with attestor signature
  */
 export type ProcessedClaimData = {
-	/** Claim identifier this processing belongs to */
-	claimId: string
-	/** Processed values array */
-	values: ProcessedValue[]
-	/** Single hash binding processor to provider (NOT user-specific) */
-	processorProviderHash: string
-	/** Signature over claimId + processorProviderHash + values */
+	/** The original verified claim */
+	claim: ProviderClaimData
+	/** Signature over the message hash */
 	signature: Uint8Array
+	/** Output specifications from the processor */
+	outputs: OutputSpec[]
 	/** Attestor address that signed */
 	attestorAddress: string
-	/** Provider name */
-	provider: string
-	/** Optional metadata */
-	metadata?: Record<string, any>
 }
 
 /**

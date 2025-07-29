@@ -1,10 +1,6 @@
 import { describe, expect, it } from '@jest/globals'
-import { ProviderClaimData } from 'src/proto/api'
-import { DeclarativeExecutor } from 'src/server/processors/declarative-executor'
+import { createClaimData, executeProcessorForTest } from 'src/tests/processors/test-helpers'
 import { DeclarativeProcessor } from 'src/types/declarative-processor'
-import { logger } from 'src/utils'
-
-const executor = new DeclarativeExecutor(logger)
 
 const zelleBoAExtensionProof = {
 	'claim': {
@@ -103,22 +99,10 @@ const mercadoOnlineTransferExtensionProof = {
 }
 
 describe('Payment Processors', () => {
-	const createClaimData = (proof: any): ProviderClaimData => {
-		return {
-			provider: proof.claim.provider,
-			parameters: proof.claim.parameters,
-			owner: proof.claim.owner,
-			timestampS: proof.claim.timestampS,
-			context: proof.claim.context,
-			identifier: proof.claim.identifier,
-			epoch: proof.claim.epoch
-		} as ProviderClaimData
-	}
 
 	describe('Zelle Bank of America Processor', () => {
 		const processor: DeclarativeProcessor = {
 			version: '1.0.0',
-			description: 'Process Zelle payments from Bank of America',
 			extract: {
 				amount: '$.context.extractedParameters.amount',
 				status: '$.context.extractedParameters.status',
@@ -152,12 +136,17 @@ describe('Payment Processors', () => {
 					]
 				}
 			},
-			output: ['recipientId', 'amountInCents', 'currency', 'timestamp']
+			outputs: [
+				{ name: 'recipientId', type: 'address' },
+				{ name: 'amountInCents', type: 'uint256' },
+				{ name: 'currency', type: 'string' },
+				{ name: 'timestamp', type: 'uint256' }
+			]
 		}
 
 		it('should process Zelle BoA payment correctly', async() => {
 			const claimData = createClaimData(zelleBoAExtensionProof)
-			const result = await executor.execute(processor, claimData)
+			const result = await executeProcessorForTest(processor, claimData)
 
 			expect(result.values).toHaveLength(4)
 			expect(result.values[0]).toBe('0x3bcb39ffd57dd47e25c484c95ce7f7591305af0cfaaf7f18ab4ab548217fb303') // recipientId
@@ -170,7 +159,6 @@ describe('Payment Processors', () => {
 	describe('Chase Payment Processor', () => {
 		const processor: DeclarativeProcessor = {
 			version: '1.0.0',
-			description: 'Process Chase payments with status validation',
 			extract: {
 				amount: '$.context.extractedParameters.amount',
 				date: '$.context.extractedParameters.date',
@@ -210,12 +198,17 @@ describe('Payment Processors', () => {
 					]
 				}
 			},
-			output: ['recipientId', 'amountInCents', 'currency', 'timestamp']
+			outputs: [
+				{ name: 'recipientId', type: 'bytes32' },
+				{ name: 'amountInCents', type: 'uint256' },
+				{ name: 'currency', type: 'string' },
+				{ name: 'timestamp', type: 'uint256' }
+			]
 		}
 
 		it('should process Chase DELIVERED payment', async() => {
 			const claimData = createClaimData(chaseListDeliveredProof)
-			const result = await executor.execute(processor, claimData)
+			const result = await executeProcessorForTest(processor, claimData)
 
 			expect(result.values).toHaveLength(4)
 			expect(result.values[0]).toMatch(/^0x[a-f0-9]{64}$/) // hashed recipient ID
@@ -226,7 +219,7 @@ describe('Payment Processors', () => {
 
 		it('should process Chase COMPLETED payment', async() => {
 			const claimData = createClaimData(chaseListCompletedProof)
-			const result = await executor.execute(processor, claimData)
+			const result = await executeProcessorForTest(processor, claimData)
 
 			expect(result.values).toHaveLength(4)
 			expect(result.values[0]).toMatch(/^0x[a-f0-9]{64}$/) // hashed recipient ID
@@ -239,7 +232,6 @@ describe('Payment Processors', () => {
 	describe('Zelle Citi Processor', () => {
 		const processor: DeclarativeProcessor = {
 			version: '1.0.0',
-			description: 'Process Zelle payments from Citi',
 			extract: {
 				amount: '$.context.extractedParameters.amount',
 				paymentID: '$.context.extractedParameters.paymentID',
@@ -273,12 +265,17 @@ describe('Payment Processors', () => {
 					]
 				}
 			},
-			output: ['recipientId', 'amountInCents', 'currency', 'timestamp']
+			outputs: [
+				{ name: 'recipientId', type: 'address' },
+				{ name: 'amountInCents', type: 'uint256' },
+				{ name: 'currency', type: 'string' },
+				{ name: 'timestamp', type: 'uint256' }
+			]
 		}
 
 		it('should process Zelle Citi payment correctly', async() => {
 			const claimData = createClaimData(zelleCitiExtensionProof)
-			const result = await executor.execute(processor, claimData)
+			const result = await executeProcessorForTest(processor, claimData)
 
 			expect(result.values).toHaveLength(4)
 			expect(result.values[0]).toBe('0x3bcb39ffd57dd47e25c484c95ce7f7591305af0cfaaf7f18ab4ab548217fb303') // recipientId
@@ -291,7 +288,6 @@ describe('Payment Processors', () => {
 	describe('Wise Processor', () => {
 		const processor: DeclarativeProcessor = {
 			version: '1.0.0',
-			description: 'Process Wise international transfers',
 			extract: {
 				paymentId: '$.context.extractedParameters.paymentId',
 				state: '$.context.extractedParameters.state',
@@ -314,12 +310,17 @@ describe('Payment Processors', () => {
 					]
 				}
 			},
-			output: ['targetRecipientId', 'amountInCents', 'targetCurrency', 'timestamp']
+			outputs: [
+				{ name: 'targetRecipientId', type: 'address' },
+				{ name: 'amountInCents', type: 'uint256' },
+				{ name: 'targetCurrency', type: 'string' },
+				{ name: 'timestamp', type: 'uint256' }
+			]
 		}
 
 		it('should process Wise transfer correctly', async() => {
 			const claimData = createClaimData(wiseExtensionProof)
-			const result = await executor.execute(processor, claimData)
+			const result = await executeProcessorForTest(processor, claimData)
 
 			expect(result.values).toHaveLength(4)
 			expect(result.values[0]).toBe('0x267d153c16d2605a4664ed8ede0a04a35cd406ecb879b8f119c2fe997a6921c4') // recipientId
@@ -332,7 +333,6 @@ describe('Payment Processors', () => {
 	describe('Venmo Processor', () => {
 		const processor: DeclarativeProcessor = {
 			version: '1.0.0',
-			description: 'Process Venmo payments',
 			extract: {
 				amount: '$.context.extractedParameters.amount',
 				date: '$.context.extractedParameters.date',
@@ -359,12 +359,17 @@ describe('Payment Processors', () => {
 					]
 				}
 			},
-			output: ['receiverId', 'amountInCents', 'currency', 'timestamp']
+			outputs: [
+				{ name: 'receiverId', type: 'address' },
+				{ name: 'amountInCents', type: 'uint256' },
+				{ name: 'currency', type: 'string' },
+				{ name: 'timestamp', type: 'uint256' }
+			]
 		}
 
 		it('should process Venmo payment correctly', async() => {
 			const claimData = createClaimData(venmoExtensionProof)
-			const result = await executor.execute(processor, claimData)
+			const result = await executeProcessorForTest(processor, claimData)
 
 			expect(result.values).toHaveLength(4)
 			expect(result.values[0]).toBe('0xc70eb85ded26d9377e4f0b244c638ee8f7e731114911bf547bff27f7d8fc3bfa') // recipientId
@@ -377,7 +382,6 @@ describe('Payment Processors', () => {
 	describe('CashApp Processor', () => {
 		const processor: DeclarativeProcessor = {
 			version: '1.0.0',
-			description: 'Process CashApp payments',
 			extract: {
 				amount: '$.context.extractedParameters.amount',
 				currencyCode: '$.context.extractedParameters.currency_code',
@@ -402,12 +406,17 @@ describe('Payment Processors', () => {
 					]
 				}
 			},
-			output: ['receiverId', 'amountInCents', 'currencyCode', 'timestamp']
+			outputs: [
+				{ name: 'receiverId', type: 'address' },
+				{ name: 'amountInCents', type: 'uint256' },
+				{ name: 'currencyCode', type: 'string' },
+				{ name: 'timestamp', type: 'uint256' }
+			]
 		}
 
 		it('should process CashApp payment correctly', async() => {
 			const claimData = createClaimData(cashappExtensionProof)
-			const result = await executor.execute(processor, claimData)
+			const result = await executeProcessorForTest(processor, claimData)
 
 			expect(result.values).toHaveLength(4)
 			expect(result.values[0]).toBe('0x7dfd873a8a837f59842e5493dcea3a71b6f559dacd5886d3ce65542e51240585') // recipientId
@@ -420,7 +429,6 @@ describe('Payment Processors', () => {
 	describe('MercadoPago Processor', () => {
 		const processor: DeclarativeProcessor = {
 			version: '1.0.0',
-			description: 'Process MercadoPago online transfer payments',
 			extract: {
 				amt: '$.context.extractedParameters.amt',
 				cents: '$.context.extractedParameters.cents',
@@ -450,12 +458,17 @@ describe('Payment Processors', () => {
 					]
 				}
 			},
-			output: ['recipientId', 'amountInCents', 'curr', 'timestamp']
+			outputs: [
+				{ name: 'recipientId', type: 'address' },
+				{ name: 'amountInCents', type: 'uint256' },
+				{ name: 'curr', type: 'string' },
+				{ name: 'timestamp', type: 'uint256' }
+			]
 		}
 
 		it('should process MercadoPago payment correctly', async() => {
 			const claimData = createClaimData(mercadoOnlineTransferExtensionProof)
-			const result = await executor.execute(processor, claimData)
+			const result = await executeProcessorForTest(processor, claimData)
 
 			expect(result.values).toHaveLength(4)
 			expect(result.values[0]).toBe('0xf5b16d9e4edde5a51d378b8126eaffb65d0d06d0ad21f4d037611f945d3837e8') // recipientId (already hashed)

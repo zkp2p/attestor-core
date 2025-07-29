@@ -524,22 +524,23 @@ export interface ClaimTunnelRequest_TranscriptMessage {
 }
 
 export interface ProcessedClaimData {
-  /** The claim identifier (user-specific) */
-  claimId: string;
-  /** Array of processed values extracted by the processor function */
-  values: string[];
-  /**
-   * Single hash binding processor to provider (NOT user-specific)
-   * Hash of (providerTemplateHash + processorHash)
-   * Smart contracts only need to verify this ONE hash
-   */
-  processorProviderHash: string;
-  /** Attestor's signature over (claimId + processorProviderHash + values) */
+  /** The original verified claim */
+  claim:
+    | ProviderClaimData
+    | undefined;
+  /** Signature over the message hash */
   signature: Uint8Array;
-  /** Attestor address that signed the processed data */
+  /** Output specifications from the processor */
+  outputs: OutputSpec[];
+  /** Attestor address that signed */
   attestorAddress: string;
-  /** Provider name */
-  provider: string;
+}
+
+export interface OutputSpec {
+  /** Variable name to output */
+  name: string;
+  /** EVM type for smart contract encoding */
+  type: string;
 }
 
 export interface ClaimTunnelResponse {
@@ -2665,35 +2666,22 @@ export const ClaimTunnelRequest_TranscriptMessage: MessageFns<ClaimTunnelRequest
 };
 
 function createBaseProcessedClaimData(): ProcessedClaimData {
-  return {
-    claimId: "",
-    values: [],
-    processorProviderHash: "",
-    signature: new Uint8Array(0),
-    attestorAddress: "",
-    provider: "",
-  };
+  return { claim: undefined, signature: new Uint8Array(0), outputs: [], attestorAddress: "" };
 }
 
 export const ProcessedClaimData: MessageFns<ProcessedClaimData> = {
   encode(message: ProcessedClaimData, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
-    if (message.claimId !== "") {
-      writer.uint32(10).string(message.claimId);
-    }
-    for (const v of message.values) {
-      writer.uint32(18).string(v!);
-    }
-    if (message.processorProviderHash !== "") {
-      writer.uint32(26).string(message.processorProviderHash);
+    if (message.claim !== undefined) {
+      ProviderClaimData.encode(message.claim, writer.uint32(10).fork()).join();
     }
     if (message.signature.length !== 0) {
-      writer.uint32(34).bytes(message.signature);
+      writer.uint32(18).bytes(message.signature);
+    }
+    for (const v of message.outputs) {
+      OutputSpec.encode(v!, writer.uint32(26).fork()).join();
     }
     if (message.attestorAddress !== "") {
-      writer.uint32(42).string(message.attestorAddress);
-    }
-    if (message.provider !== "") {
-      writer.uint32(50).string(message.provider);
+      writer.uint32(34).string(message.attestorAddress);
     }
     return writer;
   },
@@ -2710,7 +2698,7 @@ export const ProcessedClaimData: MessageFns<ProcessedClaimData> = {
             break;
           }
 
-          message.claimId = reader.string();
+          message.claim = ProviderClaimData.decode(reader, reader.uint32());
           continue;
         }
         case 2: {
@@ -2718,7 +2706,7 @@ export const ProcessedClaimData: MessageFns<ProcessedClaimData> = {
             break;
           }
 
-          message.values.push(reader.string());
+          message.signature = reader.bytes();
           continue;
         }
         case 3: {
@@ -2726,7 +2714,7 @@ export const ProcessedClaimData: MessageFns<ProcessedClaimData> = {
             break;
           }
 
-          message.processorProviderHash = reader.string();
+          message.outputs.push(OutputSpec.decode(reader, reader.uint32()));
           continue;
         }
         case 4: {
@@ -2734,23 +2722,7 @@ export const ProcessedClaimData: MessageFns<ProcessedClaimData> = {
             break;
           }
 
-          message.signature = reader.bytes();
-          continue;
-        }
-        case 5: {
-          if (tag !== 42) {
-            break;
-          }
-
           message.attestorAddress = reader.string();
-          continue;
-        }
-        case 6: {
-          if (tag !== 50) {
-            break;
-          }
-
-          message.provider = reader.string();
           continue;
         }
       }
@@ -2764,34 +2736,26 @@ export const ProcessedClaimData: MessageFns<ProcessedClaimData> = {
 
   fromJSON(object: any): ProcessedClaimData {
     return {
-      claimId: isSet(object.claimId) ? globalThis.String(object.claimId) : "",
-      values: globalThis.Array.isArray(object?.values) ? object.values.map((e: any) => globalThis.String(e)) : [],
-      processorProviderHash: isSet(object.processorProviderHash) ? globalThis.String(object.processorProviderHash) : "",
+      claim: isSet(object.claim) ? ProviderClaimData.fromJSON(object.claim) : undefined,
       signature: isSet(object.signature) ? bytesFromBase64(object.signature) : new Uint8Array(0),
+      outputs: globalThis.Array.isArray(object?.outputs) ? object.outputs.map((e: any) => OutputSpec.fromJSON(e)) : [],
       attestorAddress: isSet(object.attestorAddress) ? globalThis.String(object.attestorAddress) : "",
-      provider: isSet(object.provider) ? globalThis.String(object.provider) : "",
     };
   },
 
   toJSON(message: ProcessedClaimData): unknown {
     const obj: any = {};
-    if (message.claimId !== "") {
-      obj.claimId = message.claimId;
-    }
-    if (message.values?.length) {
-      obj.values = message.values;
-    }
-    if (message.processorProviderHash !== "") {
-      obj.processorProviderHash = message.processorProviderHash;
+    if (message.claim !== undefined) {
+      obj.claim = ProviderClaimData.toJSON(message.claim);
     }
     if (message.signature.length !== 0) {
       obj.signature = base64FromBytes(message.signature);
     }
+    if (message.outputs?.length) {
+      obj.outputs = message.outputs.map((e) => OutputSpec.toJSON(e));
+    }
     if (message.attestorAddress !== "") {
       obj.attestorAddress = message.attestorAddress;
-    }
-    if (message.provider !== "") {
-      obj.provider = message.provider;
     }
     return obj;
   },
@@ -2801,12 +2765,88 @@ export const ProcessedClaimData: MessageFns<ProcessedClaimData> = {
   },
   fromPartial(object: DeepPartial<ProcessedClaimData>): ProcessedClaimData {
     const message = createBaseProcessedClaimData();
-    message.claimId = object.claimId ?? "";
-    message.values = object.values?.map((e) => e) || [];
-    message.processorProviderHash = object.processorProviderHash ?? "";
+    message.claim = (object.claim !== undefined && object.claim !== null)
+      ? ProviderClaimData.fromPartial(object.claim)
+      : undefined;
     message.signature = object.signature ?? new Uint8Array(0);
+    message.outputs = object.outputs?.map((e) => OutputSpec.fromPartial(e)) || [];
     message.attestorAddress = object.attestorAddress ?? "";
-    message.provider = object.provider ?? "";
+    return message;
+  },
+};
+
+function createBaseOutputSpec(): OutputSpec {
+  return { name: "", type: "" };
+}
+
+export const OutputSpec: MessageFns<OutputSpec> = {
+  encode(message: OutputSpec, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.name !== "") {
+      writer.uint32(10).string(message.name);
+    }
+    if (message.type !== "") {
+      writer.uint32(18).string(message.type);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): OutputSpec {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseOutputSpec();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.name = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.type = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): OutputSpec {
+    return {
+      name: isSet(object.name) ? globalThis.String(object.name) : "",
+      type: isSet(object.type) ? globalThis.String(object.type) : "",
+    };
+  },
+
+  toJSON(message: OutputSpec): unknown {
+    const obj: any = {};
+    if (message.name !== "") {
+      obj.name = message.name;
+    }
+    if (message.type !== "") {
+      obj.type = message.type;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<OutputSpec>): OutputSpec {
+    return OutputSpec.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<OutputSpec>): OutputSpec {
+    const message = createBaseOutputSpec();
+    message.name = object.name ?? "";
+    message.type = object.type ?? "";
     return message;
   },
 };

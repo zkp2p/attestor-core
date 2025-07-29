@@ -1,8 +1,11 @@
 import { describe, expect, it } from '@jest/globals'
 import { TransformType } from 'src/types/declarative-processor'
 import {
+	getTransform,
 	getTransformNames,
-	transformRegistry } from 'src/utils/processors/transform-registry'
+	hasTransform,
+	transformRegistry
+} from 'src/utils/processors/transform-registry'
 
 describe('Transform Registry', () => {
 	describe('String Transforms', () => {
@@ -54,6 +57,497 @@ describe('Transform Registry', () => {
 			expect(transform('abc123def', { pattern: '[0-9]+', replacement: 'X' }))
 				.toBe('abcXdef')
 			expect(transform('hello', { pattern: 'missing' })).toBe('hello')
+		})
+	})
+
+	describe('Helper Functions Coverage', () => {
+		describe('safeToString edge cases', () => {
+			it('should handle null and undefined values', () => {
+				const transform = transformRegistry[TransformType.TO_LOWER_CASE]
+				expect(transform(null)).toBe('')
+				expect(transform(undefined)).toBe('')
+			})
+
+			it('should handle objects that throw during JSON.stringify', () => {
+				const transform = transformRegistry[TransformType.TO_LOWER_CASE]
+				const circularObj: any = { a: 1 }
+				circularObj.self = circularObj // Creates circular reference
+
+				// Should return '[object]' when JSON.stringify fails
+				expect(transform(circularObj)).toBe('[object]')
+			})
+
+			it('should handle various object types', () => {
+				const transform = transformRegistry[TransformType.TO_UPPER_CASE]
+				expect(transform({ key: 'value' })).toBe('{"KEY":"VALUE"}')
+				expect(transform([1, 2, 3])).toBe('[1,2,3]')
+				expect(transform(true)).toBe('TRUE')
+				expect(transform(false)).toBe('FALSE')
+				expect(transform(123)).toBe('123')
+			})
+		})
+
+		describe('toUint8Array edge cases', () => {
+			it('should handle Uint8Array input directly', () => {
+				const transform = transformRegistry[TransformType.KECCAK256]
+				const uint8Input = new Uint8Array([104, 101, 108, 108, 111]) // 'hello'
+				const result = transform(uint8Input)
+				expect(result).toBe('0x1c8aff950685c2ed4bc3174f3472287b56d9517b9c948127319a09a7a36deac8')
+			})
+
+			it('should handle Uint8Array for SHA256', () => {
+				const transform = transformRegistry[TransformType.SHA256]
+				const uint8Input = new Uint8Array([104, 101, 108, 108, 111]) // 'hello'
+				const result = transform(uint8Input)
+				expect(result).toBe('0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824')
+			})
+		})
+	})
+
+	describe('parseTimestampSmart edge cases', () => {
+		it('should handle numeric inputs', () => {
+			const transform = transformRegistry[TransformType.PARSE_TIMESTAMP]
+
+			// Unix seconds as number
+			expect(transform(1705314600)).toBe('1705314600000')
+
+			// Unix milliseconds as number
+			expect(transform(1705314600000)).toBe('1705314600000')
+
+			// Small number (interpreted as seconds)
+			expect(transform(100)).toBe('100000')
+		})
+
+		it('should handle null/undefined/empty', () => {
+			const transform = transformRegistry[TransformType.PARSE_TIMESTAMP]
+
+			expect(() => transform(null)).toThrow('Cannot parse timestamp: empty value')
+			expect(() => transform(undefined)).toThrow('Cannot parse timestamp: empty value')
+			expect(() => transform('')).toThrow('Cannot parse timestamp: empty value')
+		})
+
+		it('should handle date patterns', () => {
+			const transform = transformRegistry[TransformType.PARSE_TIMESTAMP]
+
+			// MM/DD/YYYY pattern - Using US date format
+			const mmddyyyy = transform('12/25/2024')
+			expect(typeof mmddyyyy).toBe('string')
+			expect(Number(mmddyyyy)).toBeGreaterThan(0)
+
+			// Another valid MM/DD/YYYY date
+			const usDate = transform('01/31/2024')
+			expect(typeof usDate).toBe('string')
+			expect(Number(usDate)).toBeGreaterThan(0)
+
+			// DD.MM.YYYY pattern - This format might not parse correctly with Date constructor
+			// Let's test that it matches the pattern but may still throw
+			expect(() => transform('31.12.2024')).toThrow('Cannot parse timestamp: invalid format')
+
+			// Test a date that matches pattern but creates invalid date
+			const invalidDate = transform('02/30/2024') // Feb 30 doesn't exist
+			// Date constructor might still create a date (March 1st)
+			expect(typeof invalidDate).toBe('string')
+		})
+
+		it('should handle invalid date object creation', () => {
+			const transform = transformRegistry[TransformType.PARSE_TIMESTAMP]
+
+			// Pattern that matches but creates invalid date
+			expect(() => transform('99/99/9999')).toThrow('Cannot parse timestamp: invalid format')
+		})
+
+		it('should handle YYYY-MM-DD format that fails Date.parse', () => {
+			const transform = transformRegistry[TransformType.PARSE_TIMESTAMP]
+
+			// Create a mock that will make Date.parse return NaN for the special format
+			const originalDateParse = Date.parse
+			Date.parse = jest.fn((str) => {
+				if(str === '9999-99-99T00:00:00Z') {
+					return NaN
+				}
+
+				return originalDateParse(str)
+			})
+
+			try {
+				// This should match the YYYY-MM-DD pattern but fail Date.parse
+				expect(() => transform('9999-99-99')).toThrow('Cannot parse timestamp: invalid format')
+			} finally {
+				Date.parse = originalDateParse
+			}
+		})
+
+		it('should handle date patterns that parse successfully', () => {
+			const transform = transformRegistry[TransformType.PARSE_TIMESTAMP]
+
+			// Valid date that matches DD.MM.YYYY pattern - some locales might parse this
+			// Let's mock Date constructor to make it parse successfully
+			const OriginalDate = global.Date
+			const mockDate = jest.fn((str) => {
+				if(str === '15.01.2024') {
+					return new OriginalDate('2024-01-15')
+				}
+
+				return new OriginalDate(str)
+			}) as any
+			mockDate.parse = OriginalDate.parse
+			mockDate.now = OriginalDate.now
+			mockDate.UTC = OriginalDate.UTC
+			global.Date = mockDate
+
+			try {
+				const result = transform('15.01.2024')
+				expect(typeof result).toBe('string')
+				expect(Number(result)).toBeGreaterThan(0)
+			} finally {
+				global.Date = OriginalDate
+			}
+		})
+
+		it('should handle NaN from parseInt', () => {
+			const transform = transformRegistry[TransformType.PARSE_TIMESTAMP]
+
+			// String that looks numeric but isn't
+			expect(() => transform('12a34')).toThrow('Cannot parse timestamp: invalid format')
+		})
+
+		it('should validate YYYY-MM-DD format', () => {
+			const transform = transformRegistry[TransformType.PARSE_TIMESTAMP]
+
+			// Valid YYYY-MM-DD format
+			expect(transform('2024-01-15', { format: 'YYYY-MM-DD' })).toBe('1705276800000')
+
+			// Invalid format for YYYY-MM-DD
+			expect(() => transform('2024/01/15', { format: 'YYYY-MM-DD' }))
+				.toThrow('Date "2024/01/15" does not match format YYYY-MM-DD')
+			expect(() => transform('01-15-2024', { format: 'YYYY-MM-DD' }))
+				.toThrow('Date "01-15-2024" does not match format YYYY-MM-DD')
+		})
+
+		it('should handle YYYY-MM-DD without format parameter', () => {
+			const transform = transformRegistry[TransformType.PARSE_TIMESTAMP]
+
+			// This should hit the specific YYYY-MM-DD parsing logic
+			// First, let's make sure the normal Date.parse fails for this format
+			const originalDateParse = Date.parse
+			let callCount = 0
+			Date.parse = jest.fn((str) => {
+				callCount++
+				// Make the first call (direct parse) return NaN
+				if(callCount === 1 && str === '2024-12-25') {
+					return NaN
+				}
+
+				// But allow the formatted version to work
+				return originalDateParse(str)
+			})
+
+			try {
+				const result = transform('2024-12-25')
+				expect(typeof result).toBe('string')
+				expect(Number(result)).toBe(1735084800000) // 2024-12-25T00:00:00Z
+			} finally {
+				Date.parse = originalDateParse
+			}
+		})
+	})
+
+	describe('evaluateCondition - missing branches', () => {
+		it('should handle ne (not equal) condition', () => {
+			const transform = transformRegistry[TransformType.VALIDATE]
+
+			// Should pass when values are not equal
+			expect(transform('pending', {
+				condition: { ne: 'approved' },
+				message: 'Should not be approved'
+			})).toBe('pending')
+
+			// Should fail when values are equal
+			expect(() => transform('approved', {
+				condition: { ne: 'approved' },
+				message: 'Should not be approved'
+			})).toThrow('Should not be approved')
+		})
+
+		it('should handle gte (greater than or equal) condition', () => {
+			const transform = transformRegistry[TransformType.VALIDATE]
+
+			expect(transform(100, { condition: { gte: 100 } })).toBe(100)
+			expect(transform(101, { condition: { gte: 100 } })).toBe(101)
+			expect(() => transform(99, { condition: { gte: 100 } })).toThrow('Validation failed')
+		})
+
+		it('should handle lte (less than or equal) condition', () => {
+			const transform = transformRegistry[TransformType.VALIDATE]
+
+			expect(transform(100, { condition: { lte: 100 } })).toBe(100)
+			expect(transform(99, { condition: { lte: 100 } })).toBe(99)
+			expect(() => transform(101, { condition: { lte: 100 } })).toThrow('Validation failed')
+		})
+
+		it('should handle startsWith condition', () => {
+			const transform = transformRegistry[TransformType.VALIDATE]
+
+			expect(transform('hello world', { condition: { startsWith: 'hello' } })).toBe('hello world')
+			expect(() => transform('world hello', { condition: { startsWith: 'hello' } })).toThrow('Validation failed')
+		})
+
+		it('should handle endsWith condition', () => {
+			const transform = transformRegistry[TransformType.VALIDATE]
+
+			expect(transform('hello world', { condition: { endsWith: 'world' } })).toBe('hello world')
+			expect(() => transform('world hello', { condition: { endsWith: 'world' } })).toThrow('Validation failed')
+		})
+
+		it('should handle not condition', () => {
+			const transform = transformRegistry[TransformType.VALIDATE]
+
+			// Not equal
+			expect(transform('pending', {
+				condition: { not: { eq: 'approved' } }
+			})).toBe('pending')
+
+			expect(() => transform('approved', {
+				condition: { not: { eq: 'approved' } }
+			})).toThrow('Validation failed')
+		})
+
+		it('should return false for empty condition object', () => {
+			const transform = transformRegistry[TransformType.VALIDATE]
+
+			// Empty condition object should fail validation
+			expect(() => transform('any value', {
+				condition: {} as any,
+				message: 'Empty condition'
+			})).toThrow('Empty condition')
+		})
+	})
+
+	describe('REPLACE transform - missing cases', () => {
+		it('should handle regex pattern with forward slashes', () => {
+			const transform = transformRegistry[TransformType.REPLACE]
+
+			// Valid regex with slashes
+			expect(transform('abc123def', {
+				pattern: '/[0-9]+/',
+				replacement: 'X'
+			})).toBe('abcXdef')
+
+			// Invalid regex should throw
+			expect(() => transform('test', {
+				pattern: '/[invalid/',
+				replacement: 'X'
+			})).toThrow('Invalid regex pattern')
+		})
+
+		it('should handle regex pattern starting with special chars', () => {
+			const transform = transformRegistry[TransformType.REPLACE]
+
+			// Pattern that looks like regex (starts with special char) - [123] matches any of 1, 2, or 3
+			expect(transform('test123test', {
+				pattern: '[123]',
+				replacement: 'X'
+			})).toBe('testXXXtest')
+
+			// Another regex pattern
+			expect(transform('hello world', {
+				pattern: '^hello',
+				replacement: 'Hi'
+			})).toBe('Hi world')
+
+			// Invalid regex pattern
+			expect(() => transform('test', {
+				pattern: '[invalid',
+				replacement: 'X'
+			})).toThrow('Invalid regex pattern')
+		})
+
+		it('should handle empty pattern', () => {
+			const transform = transformRegistry[TransformType.REPLACE]
+
+			// Empty pattern should return original string
+			expect(transform('hello world', { pattern: '' })).toBe('hello world')
+			expect(transform('test', {})).toBe('test')
+		})
+
+		it('should throw when result exceeds MAX_STRING_LENGTH', () => {
+			const transform = transformRegistry[TransformType.REPLACE]
+
+			// Create a string that will exceed limit when replacements are made
+			const input = 'a'.repeat(10000)
+			expect(() => transform(input, {
+				pattern: 'a',
+				replacement: 'a'.repeat(11), // Each 'a' becomes 11 'a's
+				global: true
+			})).toThrow('Result exceeds maximum string length')
+		})
+	})
+
+	describe('MATH transform - missing cases', () => {
+		it('should throw for unsafe numbers', () => {
+			const transform = transformRegistry[TransformType.MATH]
+
+			// Very large number that exceeds MAX_SAFE_INTEGER
+			expect(() => transform('9007199254740992', { expression: '* 2' }))
+				.toThrow('Math operation resulted in unsafe number')
+
+			// Division resulting in infinity
+			expect(() => transform('1', { expression: '/ 0.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001' }))
+				.toThrow('Math operation resulted in unsafe number')
+		})
+
+		it('should handle edge case numbers', () => {
+			const transform = transformRegistry[TransformType.MATH]
+
+			// Negative numbers
+			expect(transform('-10', { expression: '* 2' })).toBe('-20')
+			expect(transform('-5', { expression: '+ 10' })).toBe('5')
+
+			// Decimal inputs
+			expect(transform('3.14', { expression: '* 2' })).toBe('6.28')
+			expect(transform('10.5', { expression: '- 0.5' })).toBe('10')
+		})
+
+		it('should return input when no expression provided', () => {
+			const transform = transformRegistry[TransformType.MATH]
+
+			expect(transform('123', {})).toBe('123')
+			expect(transform('456', { expression: undefined })).toBe('456')
+		})
+
+		it('should handle invalid operator in expression', () => {
+			const transform = transformRegistry[TransformType.MATH]
+
+			// The regex should prevent this, but if somehow an invalid operator gets through
+			expect(() => transform('10', { expression: '& 5' })).toThrow('Invalid math expression')
+			expect(() => transform('10', { expression: '^ 5' })).toThrow('Invalid math expression')
+		})
+	})
+
+	describe('SUBSTRING transform - invalid indices', () => {
+		it('should throw for invalid indices', () => {
+			const transform = transformRegistry[TransformType.SUBSTRING]
+
+			// Negative start
+			expect(() => transform('hello', { start: -1 }))
+				.toThrow('Invalid substring indices')
+
+			// End less than start
+			expect(() => transform('hello', { start: 3, end: 1 }))
+				.toThrow('Invalid substring indices')
+
+			// Negative end with valid start
+			expect(() => transform('hello', { start: 0, end: -1 }))
+				.toThrow('Invalid substring indices')
+		})
+	})
+
+	describe('CONDITIONAL transform - missing error case', () => {
+		it('should throw when if condition is missing', () => {
+			const transform = transformRegistry[TransformType.CONDITIONAL]
+
+			expect(() => transform('value', {}))
+				.toThrow('conditional requires "if" parameter')
+
+			expect(() => transform('value', { then: ['toLowerCase'] }))
+				.toThrow('conditional requires "if" parameter')
+		})
+
+		it('should use empty array for else when not provided', () => {
+			const transform = transformRegistry[TransformType.CONDITIONAL]
+
+			const result = transform('not-matching', {
+				if: { eq: 'matching' },
+				then: ['toLowerCase']
+				// No else provided
+			})
+
+			expect(result).toEqual([])
+		})
+	})
+
+	describe('CONCAT transform - MAX_STRING_LENGTH', () => {
+		it('should throw when concatenated result exceeds MAX_STRING_LENGTH', () => {
+			const transform = transformRegistry[TransformType.CONCAT]
+
+			// Create array of strings that will exceed limit when concatenated
+			const bigArray = Array(200).fill('a'.repeat(1000))
+
+			expect(() => transform(bigArray))
+				.toThrow('Result exceeds maximum string length')
+		})
+
+		it('should handle empty array', () => {
+			const transform = transformRegistry[TransformType.CONCAT]
+			expect(transform([])).toBe('')
+		})
+
+		it('should handle non-string array elements', () => {
+			const transform = transformRegistry[TransformType.CONCAT]
+			expect(transform([1, null, undefined, true, { a: 1 }]))
+				.toBe('1true{"a":1}')
+		})
+	})
+
+	describe('TEMPLATE transform - MAX_STRING_LENGTH', () => {
+		it('should throw when template result exceeds MAX_STRING_LENGTH', () => {
+			const transform = transformRegistry[TransformType.TEMPLATE]
+
+			// Create a pattern that will exceed limit
+			const bigPattern = '${value}'.repeat(20000) + 'x'.repeat(50000)
+
+			expect(() => transform('test', { pattern: bigPattern }))
+				.toThrow('Result exceeds maximum string length')
+		})
+
+		it('should handle null/undefined values in template', () => {
+			const transform = transformRegistry[TransformType.TEMPLATE]
+
+			expect(transform(null, { pattern: 'Value: ${value}' })).toBe('Value: ')
+			expect(transform(undefined, { pattern: '${value} test' })).toBe(' test')
+		})
+	})
+
+	describe('Registry utility functions', () => {
+		it('should get transform by name', () => {
+			const toLowerCase = getTransform(TransformType.TO_LOWER_CASE)
+			expect(toLowerCase).toBeDefined()
+			expect(toLowerCase!('HELLO')).toBe('hello')
+
+			const unknown = getTransform('unknown-transform')
+			expect(unknown).toBeUndefined()
+		})
+
+		it('should check if transform exists', () => {
+			expect(hasTransform(TransformType.TO_LOWER_CASE)).toBe(true)
+			expect(hasTransform(TransformType.KECCAK256)).toBe(true)
+			expect(hasTransform('unknown-transform')).toBe(false)
+		})
+	})
+
+	describe('Assert transforms - additional edge cases', () => {
+		it('should handle assertOneOf with non-array values parameter', () => {
+			const transform = transformRegistry[TransformType.ASSERT_ONE_OF]
+
+			expect(() => transform('test', { values: 'not-an-array' as any }))
+				.toThrow('assertOneOf requires "values" array parameter')
+
+			expect(() => transform('test', { values: null as any }))
+				.toThrow('assertOneOf requires "values" array parameter')
+		})
+
+		it('should handle various value types in assertions', () => {
+			const transform = transformRegistry[TransformType.ASSERT_ONE_OF]
+
+			// Numbers
+			expect(transform(123, { values: [123, 456] })).toBe(123)
+
+			// Booleans
+			expect(transform(true, { values: [true, false] })).toBe(true)
+
+			// Null/undefined
+			expect(transform(null, { values: [null, 'test'] })).toBe(null)
+			expect(transform(undefined, { values: [undefined, 'test'] })).toBe(undefined)
 		})
 	})
 
@@ -156,9 +650,7 @@ describe('Transform Registry', () => {
 			expect(transform('2024-01-15T10:30:00', { format: 'YYYY-MM-DDTHH:MM:SS' })).toBe('1705314600000')
 			expect(transform('2024-01-15 10:30:00', { format: 'YYYY-MM-DDTHH:MM:SS' })).toBe('1705314600000')
 		})
-
 	})
-
 
 	describe('Validation Transforms', () => {
 		it('should assert equals', () => {
@@ -312,6 +804,46 @@ describe('Transform Registry', () => {
 			expect(transform('test', {})).toBe('test') // No pattern
 			expect(transform('test', { pattern: 'No replacement' })).toBe('No replacement')
 			expect(transform('', { pattern: 'Value: ${value}' })).toBe('Value: ')
+		})
+	})
+
+	describe('Integration scenarios - chained transforms', () => {
+		it('should handle complex nested conditions', () => {
+			const transform = transformRegistry[TransformType.VALIDATE]
+
+			// Complex AND with nested OR
+			expect(transform(75, {
+				condition: {
+					and: [
+						{ gt: 50 },
+						{ or: [{ lt: 100 }, { eq: 100 }] }
+					]
+				}
+			})).toBe(75)
+
+			// Nested NOT conditions
+			expect(transform('test', {
+				condition: {
+					not: {
+						or: [
+							{ eq: 'fail' },
+							{ contains: 'error' }
+						]
+					}
+				}
+			})).toBe('test')
+		})
+
+		it('should handle all condition types with various input types', () => {
+			const transform = transformRegistry[TransformType.VALIDATE]
+
+			// String comparisons with numbers
+			expect(transform('100', { condition: { gt: 50 } })).toBe('100')
+			expect(transform('100', { condition: { lt: 200 } })).toBe('100')
+
+			// Contains with non-string values converted to string
+			expect(transform(12345, { condition: { contains: '234' } })).toBe(12345)
+			expect(transform({ key: 'value' }, { condition: { contains: 'key' } })).toEqual({ key: 'value' })
 		})
 	})
 

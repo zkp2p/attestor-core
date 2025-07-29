@@ -5,46 +5,38 @@
  */
 
 import jsonpath from 'jsonpath'
-import { ProviderClaimData } from 'src/proto/api'
+import { ProviderClaimData, ServiceSignatureType } from 'src/proto/api'
+import { getAttestorAddress, signAsAttestor } from 'src/server/utils/generics'
 import { Logger } from 'src/types'
 import {
 	DeclarativeProcessor,
-	DeclarativeProcessorResult,
-	ExtractionRule,
+	OutputSpec,
+	ProcessClaimOptions,
+	ProcessedClaimData,
 	TransformOperation,
 	TransformRule } from 'src/types/declarative-processor'
+import { createProcessorProviderHash, encodeAndHash } from 'src/utils'
+import { validateDeclarativeProcessor } from 'src/utils/processors/processor-validator'
 import { getTransform } from 'src/utils/processors/transform-registry'
 
 const MAX_EXECUTION_TIME = 5000 // 5 seconds
 const MAX_OUTPUT_VALUES = 100 // Maximum number of output values
 const MAX_JSONPATH_RESULTS = 1000 // Prevent JSONPath DOS
 
-let RE2: any
-try {
-	RE2 = require('re2')
-	if(!Object.keys(RE2).length) {
-		RE2 = undefined
-	}
-} catch{
-}
-
 /**
  * Execute a declarative processor on a claim
  */
 export class DeclarativeExecutor {
-	private logger: Logger
-
-	constructor(logger: Logger) {
-		this.logger = logger
-	}
-
 	/**
-   * Execute the processor and return the result
-   */
-	async execute(
-		processor: DeclarativeProcessor,
-		claim: ProviderClaimData
-	): Promise<DeclarativeProcessorResult> {
+	 * Process a verified claim using a declarative processor
+	 * Executes the processor safely and signs the results
+	 */
+	static async processClaim(
+		options: ProcessClaimOptions,
+		signatureType: ServiceSignatureType,
+		logger: Logger
+	): Promise<ProcessedClaimData | null> {
+		const { claim, processor } = options
 		const startTime = Date.now()
 		const warnings: string[] = []
 
@@ -60,50 +52,98 @@ export class DeclarativeExecutor {
 		}
 
 		try {
+			// Validate the processor before execution
+			const validationResult = validateDeclarativeProcessor(processor)
+			if(!validationResult.valid) {
+				const errors = validationResult.errors.map(e => `${e.path}: ${e.message}`).join(', ')
+				throw new Error(`Invalid processor: ${errors}`)
+			}
+
+			logger.debug({
+				provider: claim.provider,
+				processorVersion: processor.version
+			}, 'Processing claim with declarative processor')
+
+			// Get outputs from processor
+			const outputs = this.getOutputs(processor)
+
+			// Parse and process the claim data
 			const claimData = this.parseClaimData(claim)
-
 			const extracted = this.extractValues(processor.extract, claimData, warnings, checkTimeout)
-
 			const transformed = processor.transform
 				? this.transformValues(processor.transform, extracted, warnings, checkTimeout)
 				: {}
-
 			const allValues = { ...extracted, ...transformed }
+			const values = this.buildOutput(outputs, allValues)
 
-			const output = this.buildOutput(processor.output, allValues, warnings)
+			if(!values || values.length === 0) {
+				logger.warn({ provider: claim.provider }, 'Processor returned no values')
+				return null
+			}
+
+			// Get provider hash from context
+			let providerHash: string | undefined
+			try {
+				const contextData = JSON.parse(claim.context)
+				providerHash = contextData.providerHash
+			} catch(err) {
+				logger.warn({ err }, 'Failed to parse claim context for provider hash')
+			}
+
+			if(!providerHash) {
+				logger.error('Provider hash not found in claim context')
+				throw new Error('Provider hash missing from claim context')
+			}
+
+			const processorProviderHash = createProcessorProviderHash(
+				providerHash,
+				processor
+			)
+
+			// Create hash for EVM-compatible signature
+			const messageHash = encodeAndHash({
+				processorProviderHash,
+				values,
+				outputs
+			})
+
+			// Use regular signing with personal message prefix for safety
+			const signature = await signAsAttestor(
+				Buffer.from(messageHash.slice(2), 'hex'), // Convert hex hash to buffer
+				signatureType
+			)
 
 			const executionTimeMs = Date.now() - startTime
 
-			if(timeoutId) {
-				clearTimeout(timeoutId)
-			}
+			logger.info({
+				provider: claim.provider,
+				valueCount: values.length,
+				processorProviderHash,
+				evmTypes: outputs.map(o => o.type),
+				executionTimeMs,
+				warnings: warnings.length > 0 ? warnings : undefined
+			}, 'Claim processed and signed with EVM types')
 
 			return {
-				values: output,
-				metadata: {
-					executionTimeMs,
-					extractedVariables: Object.keys(extracted),
-					defaultedVariables: warnings
-						.filter(w => w.includes('Using default'))
-						.map(w => w.split("'")[1]),
-					warnings: warnings.length > 0 ? warnings : undefined
-				}
+				claim,
+				signature,
+				outputs,
+				attestorAddress: getAttestorAddress(signatureType)
 			}
-		} catch(error) {
-			// Clear timeout on error
+		} catch(err) {
+			logger.error({ err, provider: claim.provider }, 'Error processing claim')
+			return null
+		} finally {
 			if(timeoutId) {
 				clearTimeout(timeoutId)
 			}
-
-			this.logger.error({ error, processor }, 'Failed to execute declarative processor')
-			throw error
 		}
 	}
 
 	/**
-   * Parse claim data into a queryable object
-   */
-	private parseClaimData(claim: ProviderClaimData): any {
+	 * Parse claim data into a queryable object
+	 */
+	private static parseClaimData(claim: ProviderClaimData): any {
 		const result: any = {
 			...claim,
 			timestampS: claim.timestampS
@@ -112,14 +152,14 @@ export class DeclarativeExecutor {
 		try {
 			result.context = JSON.parse(claim.context)
 		} catch(err) {
-			this.logger.warn({ err }, 'Failed to parse claim context as JSON')
+			// Keep as string if not valid JSON
 			result.context = claim.context
 		}
 
 		try {
 			result.parameters = JSON.parse(claim.parameters)
 		} catch(err) {
-			this.logger.warn({ err }, 'Failed to parse claim parameters as JSON')
+			// Keep as string if not valid JSON
 			result.parameters = claim.parameters
 		}
 
@@ -127,44 +167,31 @@ export class DeclarativeExecutor {
 	}
 
 	/**
-   * Extract values using JSONPath
-   */
-	private extractValues(
-		extractRules: Record<string, string | ExtractionRule>,
+	 * Extract values using JSONPath
+	 */
+	private static extractValues(
+		extractRules: Record<string, string>,
 		data: any,
 		warnings: string[],
 		checkTimeout: () => void
 	): Record<string, any> {
 		const extracted: Record<string, any> = {}
 
-		for(const [varName, rule] of Object.entries(extractRules)) {
+		for(const [varName, jsonPath] of Object.entries(extractRules)) {
 			checkTimeout() // Check timeout periodically
 			try {
-				let value: any
-
-				if(typeof rule === 'string') {
-						const results = jsonpath.query(data, rule)
-					if(results.length > MAX_JSONPATH_RESULTS) {
-						throw new Error(`JSONPath returned too many results (${results.length} > ${MAX_JSONPATH_RESULTS})`)
-					}
-
-					value = results.length > 0 ? results[0] : undefined
-				} else {
-						value = this.extractWithRule(rule, data)
+				const results = jsonpath.query(data, jsonPath)
+				if(results.length > MAX_JSONPATH_RESULTS) {
+					throw new Error(`JSONPath returned too many results (${results.length} > ${MAX_JSONPATH_RESULTS})`)
 				}
 
-				if(typeof rule === 'object' && rule.regex && typeof value === 'string') {
-					value = this.applyRegex(value, rule.regex, rule.regexGroup)
-				}
-
-				if(value === undefined && typeof rule === 'object' && 'default' in rule) {
-					value = rule.default
-					warnings.push(`Using default value for '${varName}'`)
-				}
-
+				const value = results.length > 0 ? results[0] : undefined
 				extracted[varName] = value
+
+				if(value === undefined) {
+					warnings.push(`No value found for '${varName}' at path '${jsonPath}'`)
+				}
 			} catch(err) {
-				this.logger.warn({ err, varName, rule }, 'Failed to extract value')
 				warnings.push(`Failed to extract '${varName}': ${err}`)
 			}
 		}
@@ -173,58 +200,9 @@ export class DeclarativeExecutor {
 	}
 
 	/**
-   * Apply regex to a value and extract group
-   */
-	private applyRegex(value: string, pattern: string, group?: number): string | undefined {
-		try {
-			const regex = RE2 ? new RE2(pattern) : new RegExp(pattern)
-			const match = value.match(regex)
-			if(match) {
-				const captureGroup = group ?? 1
-				return match[captureGroup] ?? match[0]
-			}
-
-			return undefined
-		} catch(err) {
-			throw new Error(`Invalid regex pattern: ${pattern}`)
-		}
-	}
-
-	/**
-   * Extract value using extraction rule
-   */
-	private extractWithRule(rule: ExtractionRule, data: any): any {
-		if(rule.paths) {
-			for(const path of rule.paths) {
-				const results = jsonpath.query(data, path)
-				if(results.length > MAX_JSONPATH_RESULTS) {
-					throw new Error(`JSONPath returned too many results (${results.length} > ${MAX_JSONPATH_RESULTS})`)
-				}
-
-				if(results.length > 0 && results[0] !== null && results[0] !== undefined) {
-					return results[0]
-				}
-			}
-
-			return undefined
-		}
-
-		if(rule.path) {
-			const results = jsonpath.query(data, rule.path)
-			if(results.length > MAX_JSONPATH_RESULTS) {
-				throw new Error(`JSONPath returned too many results (${results.length} > ${MAX_JSONPATH_RESULTS})`)
-			}
-
-			return results.length > 0 ? results[0] : undefined
-		}
-
-		return undefined
-	}
-
-	/**
-   * Transform extracted values
-   */
-	private transformValues(
+	 * Transform extracted values
+	 */
+	private static transformValues(
 		transformRules: Record<string, TransformRule>,
 		extracted: Record<string, any>,
 		warnings: string[],
@@ -262,7 +240,6 @@ export class DeclarativeExecutor {
 
 				transformed[varName] = value
 			} catch(err) {
-				this.logger.warn({ err, varName, rule }, 'Failed to transform value')
 				warnings.push(`Failed to transform '${varName}': ${err}`)
 				transformed[varName] = '' // Set to empty string on error
 			}
@@ -272,9 +249,9 @@ export class DeclarativeExecutor {
 	}
 
 	/**
-   * Apply a single transform operation
-   */
-	private applyOperation(value: any, op: TransformOperation | string): any {
+	 * Apply a single transform operation
+	 */
+	private static applyOperation(value: any, op: TransformOperation | string): any {
 		let opName: string
 		let params: any = {}
 
@@ -302,53 +279,39 @@ export class DeclarativeExecutor {
 			return result
 		}
 
-		try {
-			return transform(value, params)
-		} catch(err) {
-			this.logger.error({ err, opName, value, params }, 'Transform execution failed')
-			throw err
-		}
+		return transform(value, params)
 	}
 
 	/**
-   * Build output array from transformed values
-   */
-	private buildOutput(
-		outputSpec: string[],
-		values: Record<string, any>,
-		warnings: string[]
-	): string[] {
-		if(outputSpec.length > MAX_OUTPUT_VALUES) {
-			throw new Error(`Too many output values (${outputSpec.length} > ${MAX_OUTPUT_VALUES})`)
+	 * Get outputs from processor
+	 */
+	private static getOutputs(processor: DeclarativeProcessor): OutputSpec[] {
+		return processor.outputs
+	}
+
+	/**
+	 * Build output array from transformed values
+	 */
+	private static buildOutput(
+		outputs: OutputSpec[],
+		values: Record<string, any>
+	): any[] {
+		if(outputs.length > MAX_OUTPUT_VALUES) {
+			throw new Error(`Too many output values (${outputs.length} > ${MAX_OUTPUT_VALUES})`)
 		}
 
-		const output: string[] = []
+		const output: any[] = []
 
-		for(const varName of outputSpec) {
-			const value = values[varName]
+		for(const spec of outputs) {
+			const value = values[spec.name]
 
-			if(value === undefined) {
-				warnings.push(`Output variable '${varName}' is undefined`)
-				output.push('')
-			} else if(value === null) {
-				warnings.push(`Output variable '${varName}' is null`)
-				output.push('')
-			} else {
-				output.push(String(value))
+			if(value === undefined || value === null) {
+				throw new Error(`Output variable '${spec.name}' is ${value}. All output values must be defined.`)
 			}
+
+			output.push(value)
 		}
 
 		return output
-	}
-
-	/**
-   * Create a hash of the declarative processor for caching/identification
-   */
-	static hash(processor: DeclarativeProcessor): string {
-		const { utils } = require('ethers')
-		const normalized = JSON.stringify(processor, Object.keys(processor).sort())
-		return utils.keccak256(
-			new TextEncoder().encode(normalized)
-		).toLowerCase()
 	}
 }

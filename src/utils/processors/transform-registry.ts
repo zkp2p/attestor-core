@@ -143,14 +143,6 @@ function evaluateCondition(value: any, condition: ConditionalExpression): boolea
 		return safeToString(value).endsWith(condition.endsWith)
 	}
 
-	if(condition.matches !== undefined) {
-		try {
-			const regex = makeRegex(condition.matches)
-			return regex.test(safeToString(value))
-		} catch(err) {
-			throw new Error(`Invalid regex pattern: ${condition.matches}`)
-		}
-	}
 
 	if(condition.and) {
 		return condition.and.every(c => evaluateCondition(value, c))

@@ -5,8 +5,8 @@
  */
 
 import {
-	ExtractionRule,
 	isDeclarativeProcessor,
+	OutputSpec,
 	ProcessorValidationResult,
 	TransformOperation,
 	TransformRule } from 'src/types/declarative-processor'
@@ -42,7 +42,15 @@ export function validateDeclarativeProcessor(
 		validateTransformRules(processor.transform, processor.extract, errors, warnings)
 	}
 
-	validateOutput(processor.output, processor.extract, processor.transform, errors, warnings)
+	// Validate outputs
+	if(!processor.outputs) {
+		errors.push({
+			path: 'outputs',
+			message: 'Processor must have outputs array'
+		})
+	} else {
+		validateOutputs(processor.outputs, processor.extract, processor.transform, errors, warnings)
+	}
 
 	return {
 		valid: errors.length === 0,
@@ -55,7 +63,7 @@ export function validateDeclarativeProcessor(
  * Validate extraction rules
  */
 function validateExtractRules(
-	extractRules: Record<string, string | ExtractionRule>,
+	extractRules: Record<string, string>,
 	errors: Array<{ path: string, message: string }>,
 	warnings: Array<{ path: string, message: string }>
 ): void {
@@ -74,7 +82,7 @@ function validateExtractRules(
 		})
 	}
 
-	for(const [varName, rule] of Object.entries(extractRules)) {
+	for(const [varName, jsonPath] of Object.entries(extractRules)) {
 		const path = `extract.${varName}`
 
 		if(!varName.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/)) {
@@ -84,42 +92,18 @@ function validateExtractRules(
 			})
 		}
 
-		if(typeof rule === 'string') {
-			if(!rule.startsWith('$')) {
-				warnings.push({
-					path,
-					message: 'JSONPath should start with $'
-				})
-			}
-		} else if(typeof rule === 'object' && rule !== null) {
-			if(!rule.path && !rule.paths) {
-				errors.push({
-					path,
-					message: 'Extraction rule must have "path" or "paths"'
-				})
-			}
-
-			if(rule.paths && !Array.isArray(rule.paths)) {
-				errors.push({
-					path: `${path}.paths`,
-					message: 'paths must be an array'
-				})
-			}
-
-			if(rule.regex) {
-				try {
-					new RegExp(rule.regex)
-				} catch(err) {
-					errors.push({
-						path: `${path}.regex`,
-						message: `Invalid regex: ${err}`
-					})
-				}
-			}
-		} else {
+		if(typeof jsonPath !== 'string') {
 			errors.push({
 				path,
-				message: 'Rule must be string or object'
+				message: 'JSONPath must be a string'
+			})
+			continue
+		}
+
+		if(!jsonPath.startsWith('$')) {
+			warnings.push({
+				path,
+				message: 'JSONPath should start with $'
 			})
 		}
 	}
@@ -190,6 +174,7 @@ function validateTransformRules(
 				})
 			} else {
 				for(const input of rule.inputs) {
+					// eslint-disable-next-line max-depth
 					if(!allVarNames.has(input)) {
 						errors.push({
 							path: `${path}.inputs`,
@@ -339,28 +324,29 @@ function validateOperationParams(
 	}
 }
 
+
 /**
- * Validate output specification
+ * Validate outputs
  */
-function validateOutput(
-	output: string[],
+function validateOutputs(
+	outputs: OutputSpec[],
 	extractRules: Record<string, any>,
 	transformRules: Record<string, any> | undefined,
 	errors: Array<{ path: string, message: string }>,
 	warnings: Array<{ path: string, message: string }>
 ): void {
-	if(!Array.isArray(output)) {
+	if(!Array.isArray(outputs)) {
 		errors.push({
-			path: 'output',
-			message: 'output must be an array'
+			path: 'outputs',
+			message: 'outputs must be an array'
 		})
 		return
 	}
 
-	if(output.length === 0) {
+	if(outputs.length === 0) {
 		errors.push({
-			path: 'output',
-			message: 'At least one output value is required'
+			path: 'outputs',
+			message: 'At least one output is required'
 		})
 	}
 
@@ -369,29 +355,92 @@ function validateOutput(
 		...(transformRules ? Object.keys(transformRules) : [])
 	])
 
-	for(const [index, varName] of output.entries()) {
-		if(typeof varName !== 'string') {
+	for(const [index, spec] of outputs.entries()) {
+		const path = `outputs[${index}]`
+
+		if(!spec || typeof spec !== 'object') {
 			errors.push({
-				path: `output[${index}]`,
-				message: 'Output value must be string'
+				path,
+				message: 'Output must be an object with name and type'
 			})
-		} else if(!allVarNames.has(varName)) {
+			continue
+		}
+
+		if(typeof spec.name !== 'string') {
 			errors.push({
-				path: `output[${index}]`,
-				message: `Unknown variable: ${varName}`
+				path: `${path}.name`,
+				message: 'Output name must be a string'
+			})
+		} else if(!allVarNames.has(spec.name)) {
+			errors.push({
+				path: `${path}.name`,
+				message: `Unknown variable: ${spec.name}`
+			})
+		}
+
+		if(typeof spec.type !== 'string') {
+			errors.push({
+				path: `${path}.type`,
+				message: 'Output type must be a string'
+			})
+		} else if(!isValidEvmType(spec.type)) {
+			warnings.push({
+				path: `${path}.type`,
+				message: `Potentially invalid EVM type: ${spec.type}`
 			})
 		}
 	}
 
+	// Check for duplicate names
 	const seen = new Set<string>()
-	for(const [index, varName] of output.entries()) {
-		if(seen.has(varName)) {
+	for(const [index, spec] of outputs.entries()) {
+		if(spec.name && seen.has(spec.name)) {
 			warnings.push({
-				path: `output[${index}]`,
-				message: `Duplicate output variable: ${varName}`
+				path: `outputs[${index}].name`,
+				message: `Duplicate output variable: ${spec.name}`
 			})
 		}
 
-		seen.add(varName)
+		if(spec.name) {
+			seen.add(spec.name)
+		}
 	}
 }
+
+
+/**
+ * Check if a string is a valid EVM type
+ */
+function isValidEvmType(type: string): boolean {
+	// Common EVM types
+	const validTypes = [
+		'uint256', 'uint128', 'uint64', 'uint32', 'uint16', 'uint8',
+		'int256', 'int128', 'int64', 'int32', 'int16', 'int8',
+		'address', 'bool', 'bytes32', 'bytes', 'string'
+	]
+
+	// Check exact match
+	if(validTypes.includes(type)) {
+		return true
+	}
+
+	// Check for uint/int with size
+	if(/^u?int\d+$/.test(type)) {
+		const size = parseInt(type.replace(/^u?int/, ''))
+		return size > 0 && size <= 256 && size % 8 === 0
+	}
+
+	// Check for fixed bytes
+	if(/^bytes\d+$/.test(type)) {
+		const size = parseInt(type.replace(/^bytes/, ''))
+		return size > 0 && size <= 32
+	}
+
+	// Check for arrays
+	if(type.endsWith('[]')) {
+		return isValidEvmType(type.slice(0, -2))
+	}
+
+	return false
+}
+

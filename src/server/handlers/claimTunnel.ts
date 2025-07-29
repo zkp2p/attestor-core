@@ -1,9 +1,9 @@
 import { MAX_CLAIM_TIMESTAMP_DIFF_S } from 'src/config'
 import { ClaimTunnelResponse } from 'src/proto/api'
+import { DeclarativeExecutor } from 'src/server/processors/declarative-executor'
 import { getApm } from 'src/server/utils/apm'
 import { assertTranscriptsMatch, assertValidClaimRequest } from 'src/server/utils/assert-valid-claim-request'
 import { getAttestorAddress, signAsAttestor } from 'src/server/utils/generics'
-import { processClaim } from 'src/server/processors/process-claim'
 import { RPCHandler } from 'src/types'
 import { AttestorError, createSignDataForClaim, getIdentifierFromClaimInfo, unixTimestampSeconds } from 'src/utils'
 
@@ -85,7 +85,7 @@ export const claimTunnel: RPCHandler<'claimTunnel'> = async(
 					// Parse the processor configuration
 					const processor = JSON.parse(processorJson)
 
-					const processedData = await processClaim(
+					const processedData = await DeclarativeExecutor.processClaim(
 						{
 							claim: res.claim,
 							processor
@@ -94,22 +94,17 @@ export const claimTunnel: RPCHandler<'claimTunnel'> = async(
 						logger
 					)
 
-					if(processedData) {
-						logger.info({
-							claimId: processedData.claimId,
-							valueCount: processedData.values.length,
-							processorProviderHash: processedData.processorProviderHash
-						}, 'Claim processed successfully')
+					// eslint-disable-next-line max-depth
+					if(!processedData) {
+						logger.warn('Processor returned no data')
+						throw new Error('Failed to process claim')
+					}
 
-						// Set processed data in the protobuf field
-						res.processedData = {
-							claimId: processedData.claimId,
-							values: processedData.values.map(String),
-							processorProviderHash: processedData.processorProviderHash,
-							signature: processedData.signature,
-							attestorAddress: processedData.attestorAddress,
-							provider: processedData.provider
-						}
+					res.processedData = {
+						claim: processedData.claim,
+						signature: processedData.signature,
+						outputs: processedData.outputs,
+						attestorAddress: processedData.attestorAddress
 					}
 				} catch(err) {
 					logger.error({ err }, 'Error processing claim')

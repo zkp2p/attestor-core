@@ -8,9 +8,3 @@ export * as proto from './proto/api'
 export * from './client'
 export * from './mechain'
 export * from './window-rpc'
-
-// Claim processing exports - only for server-side use
-export { processClaim } from './server/utils/process-claim'
-export { ProcessorExecutor } from './server/utils/processor-executor'
-export { DeclarativeExecutor } from './server/utils/declarative-executor'
-export { validateDeclarativeProcessor } from './utils/processor-validator'

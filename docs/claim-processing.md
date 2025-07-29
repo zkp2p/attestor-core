@@ -171,13 +171,6 @@ const provider = {
 }
 ```
 
-Or register directly:
-
-```typescript
-import { setProviderProcessor } from 'src/utils/processed-claim-utils'
-
-setProviderProcessor('venmo', venmoProcessor)
-```
 
 ## Smart Contract Integration
 

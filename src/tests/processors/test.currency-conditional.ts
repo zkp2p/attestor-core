@@ -1,11 +1,9 @@
 import { describe, expect, it } from '@jest/globals'
 import { ProviderClaimData } from 'src/proto/api'
-import { DeclarativeExecutor } from 'src/server/processors/declarative-executor'
+import { executeProcessorForTest } from 'src/tests/processors/test-helpers'
 import { DeclarativeProcessor } from 'src/types/declarative-processor'
-import { logger } from 'src/utils'
 
 describe('Currency-Specific Conditional Scaling', () => {
-	const executor = new DeclarativeExecutor(logger)
 
 	it('should not scale JPY amounts', async() => {
 		const mockClaim: ProviderClaimData = {
@@ -56,11 +54,14 @@ describe('Currency-Specific Conditional Scaling', () => {
 					]
 				}
 			},
-			output: ['scaledAmount', 'currency']
+			outputs: [
+				{ name: 'scaledAmount', type: 'uint256' },
+				{ name: 'currency', type: 'string' }
+			]
 		}
 
 		// For now, let's test a simpler version
-		const result = await executor.execute(revolutStyleProcessor, mockClaim)
+		const result = await executeProcessorForTest(revolutStyleProcessor, mockClaim)
 		expect(result.values[0]).toBe('5000') // JPY not scaled
 		expect(result.values[1]).toBe('JPY')
 	})
@@ -102,10 +103,13 @@ describe('Currency-Specific Conditional Scaling', () => {
 						ops: [{ type: 'math', expression: '/ 100' }] // Always scale for non-JPY in this test
 					}
 				},
-				output: ['scaledAmount', 'currency']
+				outputs: [
+					{ name: 'scaledAmount', type: 'string' },
+					{ name: 'currency', type: 'string' }
+				]
 			}
 
-			const result = await executor.execute(processor, mockClaim)
+			const result = await executeProcessorForTest(processor, mockClaim)
 			expect(result.values[0]).toBe(testCase.expected)
 			expect(result.values[1]).toBe(testCase.currency)
 		}
@@ -117,7 +121,6 @@ describe('Currency-Specific Conditional Scaling', () => {
  */
 export const revolutProcessorWithCurrencyScaling: DeclarativeProcessor = {
 	version: '1.0.0',
-	description: 'Revolut processor with currency-specific amount scaling',
 
 	extract: {
 		amount: '$.context.extractedParameters.amount',
@@ -157,5 +160,10 @@ export const revolutProcessorWithCurrencyScaling: DeclarativeProcessor = {
 		}
 	},
 
-	output: ['scaledAmount', 'currency', 'timestampSeconds', 'paymentId']
+	outputs: [
+		{ name: 'scaledAmount', type: 'uint256' },
+		{ name: 'currency', type: 'string' },
+		{ name: 'timestampSeconds', type: 'uint256' },
+		{ name: 'paymentId', type: 'string' }
+	]
 }
