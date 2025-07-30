@@ -1,6 +1,6 @@
 {
-  "name": "@reclaimprotocol/attestor-core",
-  "version": "4.0.3",
+  "name": "@zkp2p/attestor-core",
+  "version": "4.0.3-rc.1",
   "description": "",
   "main": "lib/index",
   "scripts": {
