@@ -1,6 +1,6 @@
 {
   "name": "@zkp2p/attestor-core",
-  "version": "4.0.3-rc.9",
+  "version": "4.0.3-rc.10",
   "description": "",
   "main": "lib/index",
   "scripts": {
@@ -116,9 +116,7 @@
     "@ethersproject/providers": {
       "ws": "^7.5.10"
     },
-    "elliptic": "^v6.5.7",
-    "@peculiar/x509": "1.12.3",
-    "@peculiar/asn1-ecc": "2.3.14"
+    "elliptic": "^v6.5.7"
   },
   "optionalDependencies": {
     "koffi": "^2.9.2"
