@@ -8,6 +8,7 @@ module.exports = {
 	],
 	testMatch: [
 		'**/src/tests/test.*.+(ts|tsx)',
+		'**/src/tests/**/test.*.+(ts|tsx)',
 	],
 	transform: {
 		'^.+\\.(js|ts|tsx)?$': [

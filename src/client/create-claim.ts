@@ -96,6 +96,7 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 		timestampS,
 		updateProviderParams,
 		updateParametersFromOprfData = true,
+		processor,
 		...zkOpts
 	}: CreateClaimOnAttestorOpts<N>
 ) {
@@ -185,7 +186,7 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 				// finished writing the response
 				setTimeout(() => {
 					endedHttpRequest?.()
-				}, 100)
+				}, 1000)
 			}
 		},
 		onClose(err) {
@@ -302,6 +303,8 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 			: ZKProofEngine.ZK_ENGINE_SNARKJS,
 		fixedServerIV: serverIV!,
 		fixedClientIV: clientIV!,
+		// Add processor if provided
+		...(processor ? { processor: JSON.stringify(processor) } : {})
 	})
 
 	onStep?.({ name: 'waiting-for-verification' })

@@ -1,6 +1,6 @@
 {
-  "name": "@reclaimprotocol/attestor-core",
-  "version": "4.0.3",
+  "name": "@zkp2p/attestor-core",
+  "version": "4.0.3-rc.17",
   "description": "",
   "main": "lib/index",
   "scripts": {
@@ -120,5 +120,6 @@
   },
   "optionalDependencies": {
     "koffi": "^2.9.2"
-  }
+  },
+  "packageManager": "yarn@3.6.3+sha512.d432ab8b22b89cb8b46649ebaf196159b0c1870904224771d75fdf8b55490aaa5de4d9f028deb0425f1513bff7843e97b9d117103795a23b12d2e7c1cedcf50f"
 }

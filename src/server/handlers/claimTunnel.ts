@@ -1,5 +1,6 @@
 import { MAX_CLAIM_TIMESTAMP_DIFF_S } from 'src/config'
 import { ClaimTunnelResponse } from 'src/proto/api'
+import { Executor } from 'src/server/processors/executor'
 import { getApm } from 'src/server/utils/apm'
 import { assertTranscriptsMatch, assertValidClaimRequest } from 'src/server/utils/assert-valid-claim-request'
 import { getAttestorAddress, signAsAttestor } from 'src/server/utils/generics'
@@ -69,6 +70,39 @@ export const claimTunnel: RPCHandler<'claimTunnel'> = async(
 				identifier: getIdentifierFromClaimInfo(claim),
 				// hardcode for compatibility with V1 claims
 				epoch: 1
+			}
+
+			// Check if a processor was provided
+			const processorJson = claimRequest.processor
+
+			logger.debug({ hasProcessor: !!processorJson }, 'Checking for processor')
+
+			if(processorJson) {
+				const processTx = getApm()
+					?.startTransaction('processClaim', { childOf: tx })
+
+				try {
+					// Parse the processor configuration
+					const processor = JSON.parse(processorJson)
+
+					const processedData = await Executor.processClaim(
+						{
+							claim: res.claim,
+							processor
+						},
+						client.metadata.signatureType,
+						logger
+					)
+
+					res.processedData = processedData
+				} catch(err) {
+					logger.error({ err }, 'Error processing claim')
+					processTx?.setOutcome('failure')
+					// Re-throw to include processor error in the response
+					throw err
+				} finally {
+					processTx?.end()
+				}
 			}
 		} catch(err) {
 			assertTx?.setOutcome('failure')
