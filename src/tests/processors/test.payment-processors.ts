@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@jest/globals'
+import { ProviderClaimData } from 'src/proto/api'
 import { createClaimData, executeProcessorForTest } from 'src/tests/processors/test-helpers'
 import { Processor } from 'src/types/processor'
 
