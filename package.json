@@ -1,6 +1,6 @@
 {
   "name": "@zkp2p/attestor-core",
-  "version": "4.0.3-rc.12",
+  "version": "4.0.3-rc.13",
   "description": "",
   "main": "lib/index",
   "scripts": {
