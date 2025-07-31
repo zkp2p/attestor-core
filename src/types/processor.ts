@@ -1,11 +1,6 @@
 import { ProviderClaimData } from 'src/proto/api'
 
 /**
- * Version of the declarative processor format
- */
-export type ProcessorVersion = '1.0.0';
-
-/**
  * Core transform operations available
  */
 export const TransformType = {
@@ -30,7 +25,9 @@ export const TransformType = {
 
 	CONDITIONAL: 'conditional',
 
-	TEMPLATE: 'template'
+	TEMPLATE: 'template',
+	
+	CONSTANT: 'constant'
 } as const
 
 export type TransformType = typeof TransformType[keyof typeof TransformType]
@@ -105,14 +102,9 @@ export interface OutputSpec {
 }
 
 /**
- * Main declarative processor structure
+ * Main processor structure
  */
-export interface DeclarativeProcessor {
-  /**
-   * Version of the processor format
-   */
-  version: ProcessorVersion
-
+export interface Processor {
   /**
    * Extract phase: pull values from the claim using JSONPath
    * Key is the variable name, value is the JSONPath string
@@ -138,9 +130,9 @@ export interface DeclarativeProcessor {
 }
 
 /**
- * Result of executing a declarative processor
+ * Result of executing a processor
  */
-export interface DeclarativeProcessorResult {
+export interface ProcessorResult {
   /**
    * Output values in the order specified by processor.output
    */
@@ -164,24 +156,15 @@ export interface DeclarativeProcessorResult {
      * Variables that used default values
      */
     defaultedVariables: string[]
-
-    /**
-     * Any warnings during execution
-     */
-    warnings?: string[]
   }
 }
 
 /**
- * Validation result for a declarative processor
+ * Validation result for a processor
  */
 export interface ProcessorValidationResult {
   valid: boolean
   errors: Array<{
-    path: string
-    message: string
-  }>
-  warnings: Array<{
     path: string
     message: string
   }>
@@ -200,13 +183,12 @@ export interface TransformRegistry {
 }
 
 /**
- * Type guard to check if a value is a declarative processor
+ * Type guard to check if a value is a processor
  */
-export function isDeclarativeProcessor(value: any): value is DeclarativeProcessor {
+export function isProcessor(value: any): value is Processor {
 	return (
 		typeof value === 'object' &&
     value !== null &&
-    value.version === '1.0.0' &&
     typeof value.extract === 'object' &&
     Array.isArray(value.outputs) &&
     value.outputs.every((o: any) => typeof o === 'object' &&
@@ -231,17 +213,19 @@ export type ProcessedClaimData = {
 	signature: Uint8Array
 	/** Output specifications from the processor */
 	outputs: OutputSpec[]
+	/** The actual processed values in order of outputs */
+	values: string[]
 	/** Attestor address that signed */
 	attestorAddress: string
 }
 
 /**
- * Options for processing a claim with a declarative processor
+ * Options for processing a claim with a processor
  */
 export type ProcessClaimOptions = {
 	/** The verified claim to process */
 	claim: ProviderClaimData
-	/** Declarative processor configuration */
-	processor: DeclarativeProcessor
+	/** Processor configuration */
+	processor: Processor
 }
 

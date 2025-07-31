@@ -1,6 +1,6 @@
 # Claim Processing
 
-The attestor-core supports processing verified claims to extract and transform values for on-chain submission using a secure, declarative JSON-based processor system. Processing happens server-side, and the extracted values are signed by the attestor's private key.
+The attestor-core supports processing verified claims to extract and transform values for on-chain submission using a secure, JSON-based processor system. Processing happens server-side, and the extracted values are signed by the attestor's private key.
 
 ## Overview
 
@@ -10,7 +10,7 @@ After a claim is successfully verified, the attestor can:
 3. Sign the processed values array
 4. Return the processed data with attestor signature
 
-## Declarative Processor System
+## Processor System
 
 Processors are defined as JSON objects that specify how to extract and transform data. This approach:
 - Eliminates security risks from arbitrary code execution
@@ -20,7 +20,7 @@ Processors are defined as JSON objects that specify how to extract and transform
 
 ## Processor Structure
 
-A declarative processor has three main phases:
+A processor has three main phases:
 
 ```typescript
 {
@@ -113,9 +113,9 @@ Create a processor in the provider's directory:
 
 ```typescript
 // src/providers/http/processors/venmo-processor.ts
-import { DeclarativeProcessor } from 'src/types/declarative-processor'
+import { Processor } from 'src/types/processor'
 
-export const venmoProcessor: DeclarativeProcessor = {
+export const venmoProcessor: Processor = {
   version: '1.0.0',
   description: 'Process Venmo P2P payments',
   

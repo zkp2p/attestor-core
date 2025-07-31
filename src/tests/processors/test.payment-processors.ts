@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals'
 import { createClaimData, executeProcessorForTest } from 'src/tests/processors/test-helpers'
-import { DeclarativeProcessor } from 'src/types/declarative-processor'
+import { Processor } from 'src/types/processor'
 
 const zelleBoAExtensionProof = {
 	'claim': {
@@ -100,9 +100,135 @@ const mercadoOnlineTransferExtensionProof = {
 
 describe('Payment Processors', () => {
 
+	describe('Currency-Specific Conditional Scaling', () => {
+		it('should not scale JPY amounts', async() => {
+			const mockClaim: ProviderClaimData = {
+				provider: 'http',
+				parameters: '{}',
+				owner: '0x1234567890123456789012345678901234567890',
+				timestampS: 1700000000,
+				context: JSON.stringify({
+					contextAddress: '0x0',
+					extractedParameters: {
+						amount: '5000', // 5000 JPY
+						currency: 'JPY'
+					}
+				}),
+				identifier: '0xabc',
+				epoch: 1
+			}
+
+			const processor: Processor = {
+				extract: {
+					amount: '$.context.extractedParameters.amount',
+					currency: '$.context.extractedParameters.currency'
+				},
+				outputs: [
+					{ name: 'amount', type: 'uint256' },
+					{ name: 'currency', type: 'string' }
+				]
+			}
+
+			const result = await executeProcessorForTest(processor, mockClaim)
+			expect(result.values[0]).toBe('5000') // JPY not scaled
+			expect(result.values[1]).toBe('JPY')
+		})
+
+		it('should scale non-JPY amounts by 100', async() => {
+			const testCases = [
+				{ amount: '12345', currency: 'USD', expected: '123.45' },
+				{ amount: '999', currency: 'EUR', expected: '9.99' },
+				{ amount: '50000', currency: 'GBP', expected: '500' },
+			]
+
+			for(const testCase of testCases) {
+				const mockClaim: ProviderClaimData = {
+					provider: 'http',
+					parameters: '{}',
+					owner: '0x1234567890123456789012345678901234567890',
+					timestampS: 1700000000,
+					context: JSON.stringify({
+						contextAddress: '0x0',
+						extractedParameters: {
+							amount: testCase.amount,
+							currency: testCase.currency
+						}
+					}),
+					identifier: '0xabc',
+					epoch: 1
+				}
+
+				const processor: Processor = {
+					extract: {
+						amount: '$.context.extractedParameters.amount',
+						currency: '$.context.extractedParameters.currency'
+					},
+					transform: {
+						scaledAmount: {
+							input: 'amount',
+							ops: [{ type: 'math', expression: '/ 100' }]
+						}
+					},
+					outputs: [
+						{ name: 'scaledAmount', type: 'string' },
+						{ name: 'currency', type: 'string' }
+					]
+				}
+
+				const result = await executeProcessorForTest(processor, mockClaim)
+				expect(result.values[0]).toBe(testCase.expected)
+				expect(result.values[1]).toBe(testCase.currency)
+			}
+		})
+
+		it('should handle currency-aware scaling in real processors', async() => {
+			// Example using CONSTANT transform for currencies that need special handling
+			const mockClaim: ProviderClaimData = {
+				provider: 'http',
+				parameters: '{}',
+				owner: '0x1234567890123456789012345678901234567890',
+				timestampS: 1700000000,
+				context: JSON.stringify({
+					extractedParameters: {
+						amount: '5000',
+						currency: 'JPY',
+						paymentId: 'pay_123'
+					}
+				}),
+				identifier: '0xabc',
+				epoch: 1
+			}
+
+			const currencyAwareProcessor: Processor = {
+				extract: {
+					amount: '$.context.extractedParameters.amount',
+					currency: '$.context.extractedParameters.currency',
+					paymentId: '$.context.extractedParameters.paymentId'
+				},
+				transform: {
+					// Use CONSTANT transform to set scaling factor based on currency
+					scalingFactor: {
+						ops: [{
+							type: 'constant',
+							value: '1' // No scaling for JPY
+						}]
+					}
+				},
+				outputs: [
+					{ name: 'amount', type: 'uint256' },
+					{ name: 'currency', type: 'string' },
+					{ name: 'scalingFactor', type: 'uint256' },
+					{ name: 'paymentId', type: 'string' }
+				]
+			}
+
+			const result = await executeProcessorForTest(currencyAwareProcessor, mockClaim)
+			expect(result.values).toEqual(['5000', 'JPY', '1', 'pay_123'])
+		})
+	})
+
 	describe('Zelle Bank of America Processor', () => {
-		const processor: DeclarativeProcessor = {
-			version: '1.0.0',
+		const processor: Processor = {
 			extract: {
 				amount: '$.context.extractedParameters.amount',
 				status: '$.context.extractedParameters.status',
@@ -157,8 +283,7 @@ describe('Payment Processors', () => {
 	})
 
 	describe('Chase Payment Processor', () => {
-		const processor: DeclarativeProcessor = {
-			version: '1.0.0',
+		const processor: Processor = {
 			extract: {
 				amount: '$.context.extractedParameters.amount',
 				date: '$.context.extractedParameters.date',
@@ -230,8 +355,7 @@ describe('Payment Processors', () => {
 	})
 
 	describe('Zelle Citi Processor', () => {
-		const processor: DeclarativeProcessor = {
-			version: '1.0.0',
+		const processor: Processor = {
 			extract: {
 				amount: '$.context.extractedParameters.amount',
 				paymentID: '$.context.extractedParameters.paymentID',
@@ -286,8 +410,7 @@ describe('Payment Processors', () => {
 	})
 
 	describe('Wise Processor', () => {
-		const processor: DeclarativeProcessor = {
-			version: '1.0.0',
+		const processor: Processor = {
 			extract: {
 				paymentId: '$.context.extractedParameters.paymentId',
 				state: '$.context.extractedParameters.state',
@@ -331,8 +454,7 @@ describe('Payment Processors', () => {
 	})
 
 	describe('Venmo Processor', () => {
-		const processor: DeclarativeProcessor = {
-			version: '1.0.0',
+		const processor: Processor = {
 			extract: {
 				amount: '$.context.extractedParameters.amount',
 				date: '$.context.extractedParameters.date',
@@ -380,8 +502,7 @@ describe('Payment Processors', () => {
 	})
 
 	describe('CashApp Processor', () => {
-		const processor: DeclarativeProcessor = {
-			version: '1.0.0',
+		const processor: Processor = {
 			extract: {
 				amount: '$.context.extractedParameters.amount',
 				currencyCode: '$.context.extractedParameters.currency_code',
@@ -427,8 +548,7 @@ describe('Payment Processors', () => {
 	})
 
 	describe('MercadoPago Processor', () => {
-		const processor: DeclarativeProcessor = {
-			version: '1.0.0',
+		const processor: Processor = {
 			extract: {
 				amt: '$.context.extractedParameters.amt',
 				cents: '$.context.extractedParameters.cents',

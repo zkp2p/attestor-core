@@ -278,8 +278,8 @@ message ClaimTunnelRequest {
 	bytes fixedClientIV = 7;
 	
 	/**
-	 * Optional declarative processor configuration for secure data transformation
-	 * JSON-serialized DeclarativeProcessor object
+	 * Optional processor configuration for secure data transformation
+	 * JSON-serialized Processor object
 	 */
 	optional string processor = 8;
 
@@ -314,9 +314,13 @@ message ProcessedClaimData {
 	 */
 	repeated OutputSpec outputs = 3;
 	/**
+	 * The actual processed values in order of outputs
+	 */
+	repeated string values = 4;
+	/**
 	 * Attestor address that signed
 	 */
-	string attestorAddress = 4;
+	string attestorAddress = 5;
 }
 
 message OutputSpec {

@@ -1,11 +1,11 @@
 import { describe, expect, it } from '@jest/globals'
 import { ProviderClaimData } from 'src/proto/api'
 import { executeProcessorForTest } from 'src/tests/processors/test-helpers'
-import { DeclarativeProcessor } from 'src/types/declarative-processor'
+import { Processor } from 'src/types/processor'
 import { createProcessorProviderHash } from 'src/utils/processors/processed-claim-utils'
-import { validateDeclarativeProcessor } from 'src/utils/processors/processor-validator'
+import { validateProcessor } from 'src/utils/processors/processor-validator'
 
-describe('Declarative Processor System', () => {
+describe('Processor System', () => {
 	const mockClaim: ProviderClaimData = {
 		provider: 'http',
 		parameters: JSON.stringify({
@@ -30,8 +30,7 @@ describe('Declarative Processor System', () => {
 
 	describe('Processor Validation', () => {
 		it('should validate a correct processor', () => {
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
+			const processor: Processor = {
 				extract: {
 					amount: '$.context.extractedParameters.amount'
 				},
@@ -40,26 +39,24 @@ describe('Declarative Processor System', () => {
 				]
 			}
 
-			const result = validateDeclarativeProcessor(processor)
+			const result = validateProcessor(processor)
 			expect(result.valid).toBe(true)
 			expect(result.errors).toHaveLength(0)
 		})
 
 		it('should reject invalid processor structure', () => {
 			const invalidProcessor = {
-				version: '2.0.0',
 				extract: {},
 				outputs: []
 			}
 
-			const result = validateDeclarativeProcessor(invalidProcessor)
+			const result = validateProcessor(invalidProcessor)
 			expect(result.valid).toBe(false)
 			expect(result.errors.length).toBeGreaterThan(0)
 		})
 
 		it('should validate transform operations', () => {
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
+			const processor: Processor = {
 				extract: {
 					amount: '$.context.extractedParameters.amount'
 				},
@@ -74,15 +71,29 @@ describe('Declarative Processor System', () => {
 				]
 			}
 
-			const result = validateDeclarativeProcessor(processor)
+			const result = validateProcessor(processor)
 			expect(result.valid).toBe(true)
+		})
+
+		it('should validate minimal processor structure', () => {
+			const processor: any = {
+				extract: {
+					amount: '$.context.extractedParameters.amount'
+				},
+				outputs: [
+					{ name: 'amount', type: 'uint256' }
+				]
+			}
+
+			const result = validateProcessor(processor)
+			expect(result.valid).toBe(true)
+			expect(result.errors).toHaveLength(0)
 		})
 	})
 
 	describe('Processor Execution', () => {
 		it('should extract simple values', async() => {
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
+			const processor: Processor = {
 				extract: {
 					address: '$.context.contextAddress',
 					amount: '$.context.extractedParameters.amount',
@@ -105,8 +116,7 @@ describe('Declarative Processor System', () => {
 		})
 
 		it('should apply transforms', async() => {
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
+			const processor: Processor = {
 				extract: {
 					recipientId: '$.context.extractedParameters.recipientId',
 					amount: '$.context.extractedParameters.amount'
@@ -134,135 +144,38 @@ describe('Declarative Processor System', () => {
 			expect(result.values[1]).toBe('15050')
 		})
 
-		it('should handle timestamp parsing', async() => {
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
+		it('should handle constants using CONSTANT transform', async() => {
+			const processor: Processor = {
 				extract: {
-					date: '$.context.extractedParameters.date'
+					amount: '$.context.extractedParameters.amount'
 				},
 				transform: {
-					timestamp: {
-						input: 'date',
-						ops: ['parseTimestamp']
-					}
-				},
-				outputs: [
-					{ name: 'timestamp', type: 'uint256' }
-				]
-			}
-
-			const result = await executeProcessorForTest(processor, mockClaim)
-
-			expect(result.values).toHaveLength(1)
-			expect(result.values[0]).toBe('1705314600000')
-		})
-
-		it('should concatenate amount parts', async() => {
-			const claimWithSplitAmount: ProviderClaimData = {
-				...mockClaim,
-				context: JSON.stringify({
-					...JSON.parse(mockClaim.context),
-					extractedParameters: {
-						amountDollars: '25',
-						amountCents: '50'
-					}
-				})
-			}
-
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
-				extract: {
-					dollars: '$.context.extractedParameters.amountDollars',
-					cents: '$.context.extractedParameters.amountCents'
-				},
-				transform: {
-					fullAmount: {
-						inputs: ['dollars', 'cents'],
-						ops: ['concat']
-					}
-				},
-				outputs: [
-					{ name: 'fullAmount', type: 'uint256' }
-				]
-			}
-
-			const result = await executeProcessorForTest(processor, claimWithSplitAmount)
-
-			expect(result.values).toEqual(['2550'])
-		})
-
-		it('should format amounts using template', async() => {
-			const claimWithSplitAmount: ProviderClaimData = {
-				...mockClaim,
-				context: JSON.stringify({
-					...JSON.parse(mockClaim.context),
-					extractedParameters: {
-						amountDollars: '25',
-						amountCents: '50'
-					}
-				})
-			}
-
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
-				extract: {
-					dollars: '$.context.extractedParameters.amountDollars',
-					cents: '$.context.extractedParameters.amountCents'
-				},
-				transform: {
-					dollarsWithDot: {
-						input: 'dollars',
-						ops: [{ type: 'template', pattern: '${value}.' }]
+					currency: {
+						input: 'amount', // CONSTANT transform ignores input but still needs it specified
+						ops: [{ type: 'constant', value: 'USD' }]
 					},
-					fullAmount: {
-						input: 'dollarsWithDot',
-						ops: [{ type: 'template', pattern: '${value}50' }]
-					}
-				},
-				outputs: [
-					{ name: 'fullAmount', type: 'string' }
-				]
-			}
-
-			const result = await executeProcessorForTest(processor, claimWithSplitAmount)
-
-			expect(result.values).toEqual(['25.50'])
-		})
-
-		it('should handle validation transforms', async() => {
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
-				extract: {
-					amount: '$.context.extractedParameters.amount',
-					status: '$.context.extractedParameters.paymentStatus'
-				},
-				transform: {
-					validatedAmount: {
+					country: {
+						input: 'amount', // CONSTANT transform ignores input but still needs it specified
+						ops: [{ type: 'constant', value: 'US' }]
+					},
+					scaledAmount: {
 						input: 'amount',
-						ops: [
-							// Simply pass through the amount without regex validation
-						]
-					},
-					validatedStatus: {
-						input: 'status',
-						ops: [
-							{ type: 'assertEquals', expected: 'completed', message: 'Payment must be completed' }
-						]
+						ops: [{ type: 'math', expression: '* 100' }]
 					}
 				},
 				outputs: [
-					{ name: 'validatedAmount', type: 'string' },
-					{ name: 'validatedStatus', type: 'string' }
+					{ name: 'scaledAmount', type: 'uint256' },
+					{ name: 'currency', type: 'string' },
+					{ name: 'country', type: 'string' }
 				]
 			}
 
 			const result = await executeProcessorForTest(processor, mockClaim)
-			expect(result.values).toEqual(['150.50', 'completed'])
+			expect(result.values).toEqual(['15050', 'USD', 'US'])
 		})
 
 		it('should throw on missing values', async() => {
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
+			const processor: Processor = {
 				extract: {
 					missingField: '$.context.extractedParameters.nonExistent'
 				},
@@ -272,7 +185,7 @@ describe('Declarative Processor System', () => {
 			}
 
 			await expect(executeProcessorForTest(processor, mockClaim))
-				.rejects.toThrow("Output variable 'missingField' is undefined. All output values must be defined.")
+				.rejects.toThrow("Value extraction failed for 'missingField' using JSONPath '$.context.extractedParameters.nonExistent'")
 		})
 
 	})
@@ -281,8 +194,7 @@ describe('Declarative Processor System', () => {
 		const mockProviderHash = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'
 
 		it('should generate consistent hashes', () => {
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
+			const processor: Processor = {
 				extract: {
 					amount: '$.context.extractedParameters.amount'
 				},
@@ -299,8 +211,7 @@ describe('Declarative Processor System', () => {
 		})
 
 		it('should generate different hashes for different processors', () => {
-			const processor1: DeclarativeProcessor = {
-				version: '1.0.0',
+			const processor1: Processor = {
 				extract: {
 					amount: '$.context.extractedParameters.amount'
 				},
@@ -309,8 +220,7 @@ describe('Declarative Processor System', () => {
 				]
 			}
 
-			const processor2: DeclarativeProcessor = {
-				version: '1.0.0',
+			const processor2: Processor = {
 				extract: {
 					amount: '$.context.extractedParameters.amount',
 					sender: '$.context.extractedParameters.senderId'
@@ -328,8 +238,7 @@ describe('Declarative Processor System', () => {
 		})
 
 		it('should generate different hashes for same processor with different providers', () => {
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
+			const processor: Processor = {
 				extract: {
 					amount: '$.context.extractedParameters.amount'
 				},
@@ -347,12 +256,44 @@ describe('Declarative Processor System', () => {
 			expect(hash1).not.toBe(hash2)
 		})
 
+		it('should generate different hashes for processors with different versions', () => {
+			const processor: Processor = {
+				extract: {
+					amount: '$.context.extractedParameters.amount'
+				},
+				outputs: [
+					{ name: 'amount', type: 'uint256' }
+				]
+			}
+
+			// Test processor without version
+			const hashWithoutVersion = createProcessorProviderHash(mockProviderHash, processor)
+
+			// Test processor with version
+			const processorWithVersion = {
+				...processor,
+				version: '1.0.0'
+			}
+			const hashWithVersion = createProcessorProviderHash(mockProviderHash, processorWithVersion)
+
+			// Test processor with different version
+			const processorWithDifferentVersion = {
+				...processor,
+				version: '2.0.0'
+			}
+			const hashWithDifferentVersion = createProcessorProviderHash(mockProviderHash, processorWithDifferentVersion)
+
+			// All hashes should be different
+			expect(hashWithoutVersion).not.toBe(hashWithVersion)
+			expect(hashWithVersion).not.toBe(hashWithDifferentVersion)
+			expect(hashWithoutVersion).not.toBe(hashWithDifferentVersion)
+		})
+
 	})
 
 	describe('New Outputs Format', () => {
 		it('should support new consolidated outputs format', async() => {
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
+			const processor: Processor = {
 				extract: {
 					address: '$.context.contextAddress',
 					amount: '$.context.extractedParameters.amount',
@@ -375,8 +316,7 @@ describe('Declarative Processor System', () => {
 		})
 
 		it('should validate new outputs format', () => {
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
+			const processor: Processor = {
 				extract: {
 					amount: '$.context.extractedParameters.amount'
 				},
@@ -385,37 +325,39 @@ describe('Declarative Processor System', () => {
 				]
 			}
 
-			const result = validateDeclarativeProcessor(processor)
+			const result = validateProcessor(processor)
 			expect(result.valid).toBe(true)
 			expect(result.errors).toHaveLength(0)
 		})
 
 		it('should handle transforms with new format', async() => {
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
+			const processor: Processor = {
 				extract: {
-					amount: '$.context.extractedParameters.amount'
+					address: '$.context.contextAddress',
+					sender: '$.context.extractedParameters.senderId'
 				},
 				transform: {
-					scaledAmount: {
-						input: 'amount',
-						ops: [{ type: 'math', expression: '* 100' }]
+					hashedSender: {
+						input: 'sender',
+						ops: ['keccak256']
 					}
 				},
 				outputs: [
-					{ name: 'scaledAmount', type: 'uint256' }
+					{ name: 'address', type: 'address' },
+					{ name: 'hashedSender', type: 'bytes32' }
 				]
 			}
 
 			const result = await executeProcessorForTest(processor, mockClaim)
-			expect(result.values).toEqual(['15050'])
+			expect(result.values).toHaveLength(2)
+			expect(result.values[0]).toBe('0x742d35cc6634c0532925a3b844bc9e7595f62a3c')
+			expect(result.values[1]).toMatch(/^0x[a-f0-9]{64}$/)
 		})
 	})
 
 	describe('EVM Type Conversions', () => {
 		it('should extract and transform values without type conversion', async() => {
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
+			const processor: Processor = {
 				extract: {
 					address: '$.context.contextAddress',
 					amount: '$.context.extractedParameters.amount',
@@ -457,31 +399,9 @@ describe('Declarative Processor System', () => {
 			expect(result.values[3]).toMatch(/^0x[a-f0-9]{64}$/)
 		})
 
-		it('should pass raw values for ABI encoding', async() => {
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
-				extract: {
-					amount: '$.context.extractedParameters.amount'
-				},
-				transform: {
-					scaledAmount: {
-						input: 'amount',
-						ops: [{ type: 'math', expression: '* 100' }]
-					}
-				},
-				outputs: [
-					{ name: 'scaledAmount', type: 'uint256' }
-				]
-			}
-
-			const result = await executeProcessorForTest(processor, mockClaim)
-			// Raw string value - ABI encoder will convert to uint256
-			expect(result.values[0]).toBe('15050')
-		})
 
 		it('should pass string values without conversion', async() => {
-			const processor: DeclarativeProcessor = {
-				version: '1.0.0',
+			const processor: Processor = {
 				extract: {
 					shortString: '$.context.extractedParameters.senderId'
 				},

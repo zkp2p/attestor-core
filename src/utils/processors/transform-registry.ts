@@ -1,7 +1,7 @@
 /**
  * Transform Registry
  *
- * Registry of transformation functions available for declarative processors.
+ * Registry of transformation functions available for processors.
  * All transforms must be deterministic and side-effect free.
  */
 
@@ -12,7 +12,7 @@ import {
 	ConditionalExpression,
 	TransformFunction,
 	TransformRegistry,
-	TransformType } from 'src/types/declarative-processor'
+	TransformType } from 'src/types/processor'
 
 const MAX_STRING_LENGTH = 100_000 // 100KB max string length
 
@@ -354,6 +354,15 @@ export const transformRegistry: TransformRegistry = {
 		}
 
 		return result
+	},
+
+	[TransformType.CONSTANT]: (value, params) => {
+		const { value: constantValue } = params || {}
+		if(constantValue === undefined) {
+			throw new Error('constant transform requires "value" parameter')
+		}
+		
+		return safeToString(constantValue)
 	}
 }
 

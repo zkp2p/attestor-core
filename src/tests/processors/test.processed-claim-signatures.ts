@@ -1,7 +1,8 @@
-import { describe, expect, it } from '@jest/globals'
+import { describe, expect, it, beforeEach } from '@jest/globals'
 import { utils, Wallet } from 'ethers'
-import { ServiceSignatureType } from 'src/proto/api'
+import { ProviderClaimData, ServiceSignatureType } from 'src/proto/api'
 import { canonicalStringify, encodeAndHash } from 'src/utils'
+import { createProcessorProviderHash } from 'src/utils/processors/processed-claim-utils'
 import { SIGNATURES } from 'src/utils/signatures'
 
 describe('Processed Claim Signatures', () => {
@@ -14,7 +15,6 @@ describe('Processed Claim Signatures', () => {
 
 			// Create sample processor
 			const processor = {
-				version: '1.0.0' as const,
 				extract: {
 					address: '$.context.address',
 					message: '$.context.message',
@@ -527,6 +527,334 @@ describe('Processed Claim Signatures', () => {
 				expect(isValid).toBe(true)
 				console.log(`✓ ${testCase.description}: ${messageHash}`)
 			}
+		})
+	})
+
+	describe('Contract Simulation - Complete Verification Flow', () => {
+		// Mock the server utils to use test wallet
+		let testWallet: Wallet
+		let testAttestorAddress: string
+
+		beforeEach(() => {
+			testWallet = Wallet.createRandom()
+			testAttestorAddress = testWallet.address.toLowerCase()
+		})
+
+		it('should generate signatures that can be verified on-chain', async() => {
+			// Create a mock claim with provider hash in context
+			const mockClaim: ProviderClaimData = {
+				provider: 'http',
+				parameters: JSON.stringify({
+					url: 'https://api.example.com/user',
+					method: 'GET'
+				}),
+				owner: '0x742d35Cc6634C0532925a3b844Bc9e7595f62a3C',
+				timestampS: 1705314600,
+				context: JSON.stringify({
+					extractedParameters: {
+						userId: '12345',
+						amount: '100.50',
+						timestamp: '2024-01-15T10:30:00Z'
+					},
+					// This providerHash would normally come from the provider system
+					providerHash: '0x' + 'a'.repeat(64) // Mock provider hash
+				}),
+				identifier: '0xabc123',
+				epoch: 1
+			}
+
+			// Create a processor that extracts and transforms data
+			const processor = {
+				extract: {
+					userId: '$.context.extractedParameters.userId',
+					amount: '$.context.extractedParameters.amount'
+				},
+				transform: {
+					amountInCents: {
+						input: 'amount',
+						ops: [{
+							type: 'math',
+							expression: '* 100' // Convert to cents
+						}]
+					},
+					currency: {
+						ops: [{
+							type: 'constant',
+							value: 'USD'
+						}]
+					}
+				},
+				outputs: [
+					{ name: 'userId', type: 'uint256' },
+					{ name: 'amountInCents', type: 'uint256' },
+					{ name: 'currency', type: 'string' }
+				]
+			}
+
+			// Simulate processing (normally done by Executor)
+			const values = ['12345', '10050', 'USD']
+			const providerHash = JSON.parse(mockClaim.context).providerHash
+			const processorProviderHash = createProcessorProviderHash(
+				providerHash,
+				{ ...processor, version: '1.0.0' }
+			)
+
+			// Create the message hash
+			const messageHash = encodeAndHash({
+				processorProviderHash,
+				values,
+				outputs: processor.outputs
+			})
+
+			// Sign with test wallet
+			const signature = await testWallet.signMessage(Buffer.from(messageHash.slice(2), 'hex'))
+
+			// Verify the recovered address matches the attestor
+			const recoveredAddress = utils.verifyMessage(Buffer.from(messageHash.slice(2), 'hex'), signature)
+			expect(recoveredAddress.toLowerCase()).toBe(testAttestorAddress)
+		})
+
+		it('should verify signatures using the same method as smart contracts', async() => {
+			const mockClaim: ProviderClaimData = {
+				provider: 'venmo',
+				parameters: JSON.stringify({
+					profileId: 'alice-venmo'
+				}),
+				owner: '0x1234567890123456789012345678901234567890',
+				timestampS: Math.floor(Date.now() / 1000),
+				context: JSON.stringify({
+					extractedParameters: {
+						payment_id: 'pay_abc123',
+						sender: 'Bob Smith',
+						receiver: 'Alice Johnson',
+						amount: '25.00',
+						currency: 'USD',
+						note: 'Lunch money'
+					},
+					providerHash: '0x' + 'b'.repeat(64)
+				}),
+				identifier: '0xdef456',
+				epoch: 2
+			}
+
+			const processor = {
+				extract: {
+					sender: '$.context.extractedParameters.sender',
+					receiver: '$.context.extractedParameters.receiver',
+					amount: '$.context.extractedParameters.amount'
+				},
+				transform: {
+					amountInCents: {
+						input: 'amount',
+						ops: [{
+							type: 'math',
+							expression: '* 100'
+						}]
+					}
+				},
+				outputs: [
+					{ name: 'sender', type: 'string' },
+					{ name: 'receiver', type: 'string' },
+					{ name: 'amountInCents', type: 'uint256' }
+				]
+			}
+
+			// Simulate processed data
+			const values = ['Bob Smith', 'Alice Johnson', '2500']
+			const processorProviderHash = createProcessorProviderHash(
+				JSON.parse(mockClaim.context).providerHash,
+				{ ...processor, version: '1.0.0' }
+			)
+
+			// Smart contract verification steps:
+			const contractInputs = {
+				processorProviderHash,
+				values,
+				outputs: processor.outputs,
+				signature: await testWallet.signMessage(Buffer.from(encodeAndHash({
+					processorProviderHash,
+					values,
+					outputs: processor.outputs
+				}).slice(2), 'hex')),
+				expectedSigner: testWallet.address.toLowerCase()
+			}
+
+			// Contract recreates the message hash
+			const recreatedHash = encodeAndHash({
+				processorProviderHash: contractInputs.processorProviderHash,
+				values: contractInputs.values,
+				outputs: contractInputs.outputs
+			})
+
+			// Contract recovers signer from signature
+			const recoveredSigner = utils.verifyMessage(
+				Buffer.from(recreatedHash.slice(2), 'hex'),
+				contractInputs.signature
+			)
+
+			// Contract verifies signer is authorized
+			expect(recoveredSigner.toLowerCase()).toBe(contractInputs.expectedSigner)
+		})
+
+		it('should fail verification with tampered values', async() => {
+			const processorProviderHash = '0x' + 'c'.repeat(64)
+			const originalValues = ['100']
+			const outputs = [{ name: 'value', type: 'uint256' }]
+
+			// Create signature for original values
+			const originalHash = encodeAndHash({ processorProviderHash, values: originalValues, outputs })
+			const signature = await testWallet.signMessage(Buffer.from(originalHash.slice(2), 'hex'))
+
+			// Try to verify with tampered values
+			const tamperedValues = ['200'] // Changed from '100' to '200'
+			const tamperedHash = encodeAndHash({ processorProviderHash, values: tamperedValues, outputs })
+
+			// Recover signer with tampered hash
+			const recoveredAddress = utils.verifyMessage(
+				Buffer.from(tamperedHash.slice(2), 'hex'),
+				signature
+			)
+
+			// The recovered address should NOT match because values were tampered
+			expect(recoveredAddress.toLowerCase()).not.toBe(testWallet.address.toLowerCase())
+		})
+
+		it('should handle different EVM types correctly in signature', async() => {
+			const processorProviderHash = '0x' + 'd'.repeat(64)
+			const values = [
+				'0x742d35cc6634c0532925a3b844bc9e7595f62a3c', // address (lowercase)
+				'true', // bool
+				'95', // uint8
+				utils.keccak256(utils.toUtf8Bytes('Hello World')) // bytes32
+			]
+			const outputs = [
+				{ name: 'userAddress', type: 'address' },
+				{ name: 'isActive', type: 'bool' },
+				{ name: 'score', type: 'uint8' },
+				{ name: 'hashedData', type: 'bytes32' }
+			]
+
+			// Create signature
+			const messageHash = encodeAndHash({ processorProviderHash, values, outputs })
+			const signature = await testWallet.signMessage(Buffer.from(messageHash.slice(2), 'hex'))
+
+			// Verify signature
+			const recoveredAddress = utils.verifyMessage(
+				Buffer.from(messageHash.slice(2), 'hex'),
+				signature
+			)
+
+			expect(recoveredAddress.toLowerCase()).toBe(testWallet.address.toLowerCase())
+
+			// Also verify the ABI encoding is correct by decoding
+			const encoded = utils.defaultAbiCoder.encode(
+				['bytes32', 'address', 'bool', 'uint8', 'bytes32'],
+				[processorProviderHash, ...values]
+			)
+			
+			const decoded = utils.defaultAbiCoder.decode(
+				['bytes32', 'address', 'bool', 'uint8', 'bytes32'],
+				encoded
+			)
+
+			expect(decoded[0]).toBe(processorProviderHash)
+			expect(decoded[1].toLowerCase()).toBe(values[0].toLowerCase())
+			expect(decoded[2]).toBe(true) // 'true' string converts to boolean true
+			expect(decoded[3]).toBe(95) // '95' string converts to number 95
+			expect(decoded[4]).toBe(values[3]) // keccak256 hash
+		})
+
+		it('should demonstrate complete contract verification flow', async() => {
+			// This test shows the complete flow from claim creation to contract verification
+			// mimicking what would happen in a real smart contract
+
+			// 1. User creates a claim with specific data
+			const userClaim: ProviderClaimData = {
+				provider: 'twitter',
+				parameters: JSON.stringify({
+					username: 'alice_twitter'
+				}),
+				owner: '0x0000000000000000000000000000000000000002',
+				timestampS: Math.floor(Date.now() / 1000),
+				context: JSON.stringify({
+					extractedParameters: {
+						username: 'alice_twitter',
+						followers: '1500',
+						verified: 'true',
+						created_at: '2020-01-15'
+					},
+					providerHash: '0x' + 'e'.repeat(64)
+				}),
+				identifier: '0xaaa111',
+				epoch: 5
+			}
+
+			// 2. Smart contract defines expected processor
+			const contractProcessor = {
+				extract: {
+					username: '$.context.extractedParameters.username',
+					followers: '$.context.extractedParameters.followers',
+					verified: '$.context.extractedParameters.verified'
+				},
+				transform: {
+					hasMinFollowers: {
+						input: 'followers',
+						ops: [{
+							type: 'validate',
+							condition: { gte: 1000 },
+							message: 'Must have at least 1000 followers'
+						}]
+					}
+				},
+				outputs: [
+					{ name: 'username', type: 'string' },
+					{ name: 'followers', type: 'uint256' },
+					{ name: 'verified', type: 'bool' }
+				]
+			}
+
+			// 3. Attestor processes the claim (simulated)
+			const attestationValues = ['alice_twitter', '1500', 'true']
+			const processorProviderHash = createProcessorProviderHash(
+				JSON.parse(userClaim.context).providerHash,
+				{ ...contractProcessor, version: '1.0.0' }
+			)
+
+			// 4. User submits to smart contract
+			const onChainSubmission = {
+				processorProviderHash,
+				values: attestationValues,
+				outputs: contractProcessor.outputs,
+				signature: await testWallet.signMessage(
+					Buffer.from(encodeAndHash({
+						processorProviderHash,
+						values: attestationValues,
+						outputs: contractProcessor.outputs
+					}).slice(2), 'hex')
+				),
+				attestor: testWallet.address.toLowerCase()
+			}
+
+			// 5. Smart contract verification logic
+			const contractMessageHash = encodeAndHash({
+				processorProviderHash: onChainSubmission.processorProviderHash,
+				values: onChainSubmission.values,
+				outputs: onChainSubmission.outputs
+			})
+
+			const contractRecoveredSigner = utils.verifyMessage(
+				Buffer.from(contractMessageHash.slice(2), 'hex'),
+				onChainSubmission.signature
+			)
+
+			// Verify signer is whitelisted attestor
+			expect(contractRecoveredSigner.toLowerCase()).toBe(onChainSubmission.attestor)
+
+			// Decode and use the values
+			const [username, followers, verified] = onChainSubmission.values
+			expect(username).toBe('alice_twitter')
+			expect(parseInt(followers)).toBeGreaterThanOrEqual(1000)
+			expect(verified).toBe('true')
 		})
 	})
 })

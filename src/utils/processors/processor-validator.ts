@@ -1,45 +1,37 @@
 /**
  * Processor Validator
  *
- * Validates declarative processors before execution
+ * Validates processors before execution
  */
 
 import {
-	isDeclarativeProcessor,
+	isProcessor,
 	OutputSpec,
 	ProcessorValidationResult,
 	TransformOperation,
-	TransformRule } from 'src/types/declarative-processor'
+	TransformRule } from 'src/types/processor'
 import { hasTransform } from 'src/utils/processors/transform-registry'
 
 /**
- * Validate a declarative processor
+ * Validate a processor
  */
-export function validateDeclarativeProcessor(
+export function validateProcessor(
 	processor: any
 ): ProcessorValidationResult {
 	const errors: Array<{ path: string, message: string }> = []
-	const warnings: Array<{ path: string, message: string }> = []
 
-	if(!isDeclarativeProcessor(processor)) {
+	if(!isProcessor(processor)) {
 		errors.push({
 			path: 'root',
 			message: 'Invalid processor structure'
 		})
-		return { valid: false, errors, warnings }
+		return { valid: false, errors }
 	}
 
-	if(processor.version !== '1.0.0') {
-		errors.push({
-			path: 'version',
-			message: `Unsupported version: ${processor.version}`
-		})
-	}
-
-	validateExtractRules(processor.extract, errors, warnings)
+	validateExtractRules(processor.extract, errors)
 
 	if(processor.transform) {
-		validateTransformRules(processor.transform, processor.extract, errors, warnings)
+		validateTransformRules(processor.transform, processor.extract, errors)
 	}
 
 	// Validate outputs
@@ -49,13 +41,12 @@ export function validateDeclarativeProcessor(
 			message: 'Processor must have outputs array'
 		})
 	} else {
-		validateOutputs(processor.outputs, processor.extract, processor.transform, errors, warnings)
+		validateOutputs(processor.outputs, processor.extract, processor.transform, errors)
 	}
 
 	return {
 		valid: errors.length === 0,
-		errors,
-		warnings
+		errors
 	}
 }
 
@@ -64,8 +55,7 @@ export function validateDeclarativeProcessor(
  */
 function validateExtractRules(
 	extractRules: Record<string, string>,
-	errors: Array<{ path: string, message: string }>,
-	warnings: Array<{ path: string, message: string }>
+	errors: Array<{ path: string, message: string }>
 ): void {
 	if(!extractRules || typeof extractRules !== 'object') {
 		errors.push({
@@ -100,12 +90,7 @@ function validateExtractRules(
 			continue
 		}
 
-		if(!jsonPath.startsWith('$')) {
-			warnings.push({
-				path,
-				message: 'JSONPath should start with $'
-			})
-		}
+		// Note: JSONPath should ideally start with $, but we don't enforce it
 	}
 }
 
@@ -115,8 +100,7 @@ function validateExtractRules(
 function validateTransformRules(
 	transformRules: Record<string, TransformRule>,
 	extractRules: Record<string, any>,
-	errors: Array<{ path: string, message: string }>,
-	warnings: Array<{ path: string, message: string }>
+	errors: Array<{ path: string, message: string }>
 ): void {
 	if(typeof transformRules !== 'object') {
 		errors.push({
@@ -138,18 +122,18 @@ function validateTransformRules(
 			})
 		}
 
-		if(allVarNames.has(varName)) {
-			warnings.push({
-				path,
-				message: 'Transform output overwrites extracted variable'
-			})
-		}
+		// Note: Transform outputs can overwrite extracted variables - this is allowed
 
 		if(!rule.input && !rule.inputs) {
-			errors.push({
-				path,
-				message: 'Transform must have "input" or "inputs"'
-			})
+			// Check if this is a CONSTANT transform
+			const firstOp = rule.ops && rule.ops[0]
+			const isConstantOp = typeof firstOp === 'object' && firstOp.type === 'constant'
+			if(!isConstantOp) {
+				errors.push({
+					path,
+					message: 'Transform must have "input" or "inputs" (unless using CONSTANT transform)'
+				})
+			}
 		}
 
 		if(rule.input && rule.inputs) {
@@ -332,8 +316,7 @@ function validateOutputs(
 	outputs: OutputSpec[],
 	extractRules: Record<string, any>,
 	transformRules: Record<string, any> | undefined,
-	errors: Array<{ path: string, message: string }>,
-	warnings: Array<{ path: string, message: string }>
+	errors: Array<{ path: string, message: string }>
 ): void {
 	if(!Array.isArray(outputs)) {
 		errors.push({
@@ -384,18 +367,15 @@ function validateOutputs(
 				message: 'Output type must be a string'
 			})
 		} else if(!isValidEvmType(spec.type)) {
-			warnings.push({
-				path: `${path}.type`,
-				message: `Potentially invalid EVM type: ${spec.type}`
-			})
+			// Note: We don't error on potentially invalid EVM types, as there might be custom types
 		}
 	}
 
-	// Check for duplicate names
+	// Check for duplicate names and add error instead of warning
 	const seen = new Set<string>()
 	for(const [index, spec] of outputs.entries()) {
 		if(spec.name && seen.has(spec.name)) {
-			warnings.push({
+			errors.push({
 				path: `outputs[${index}].name`,
 				message: `Duplicate output variable: ${spec.name}`
 			})

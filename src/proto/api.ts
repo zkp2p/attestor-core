@@ -501,8 +501,8 @@ export interface ClaimTunnelRequest {
   fixedServerIV: Uint8Array;
   fixedClientIV: Uint8Array;
   /**
-   * Optional declarative processor configuration for secure data transformation
-   * JSON-serialized DeclarativeProcessor object
+   * Optional processor configuration for secure data transformation
+   * JSON-serialized Processor object
    */
   processor?: string | undefined;
 }
@@ -532,6 +532,8 @@ export interface ProcessedClaimData {
   signature: Uint8Array;
   /** Output specifications from the processor */
   outputs: OutputSpec[];
+  /** The actual processed values in order of outputs */
+  values: string[];
   /** Attestor address that signed */
   attestorAddress: string;
 }
@@ -2666,7 +2668,7 @@ export const ClaimTunnelRequest_TranscriptMessage: MessageFns<ClaimTunnelRequest
 };
 
 function createBaseProcessedClaimData(): ProcessedClaimData {
-  return { claim: undefined, signature: new Uint8Array(0), outputs: [], attestorAddress: "" };
+  return { claim: undefined, signature: new Uint8Array(0), outputs: [], values: [], attestorAddress: "" };
 }
 
 export const ProcessedClaimData: MessageFns<ProcessedClaimData> = {
@@ -2680,8 +2682,11 @@ export const ProcessedClaimData: MessageFns<ProcessedClaimData> = {
     for (const v of message.outputs) {
       OutputSpec.encode(v!, writer.uint32(26).fork()).join();
     }
+    for (const v of message.values) {
+      writer.uint32(34).string(v!);
+    }
     if (message.attestorAddress !== "") {
-      writer.uint32(34).string(message.attestorAddress);
+      writer.uint32(42).string(message.attestorAddress);
     }
     return writer;
   },
@@ -2722,6 +2727,14 @@ export const ProcessedClaimData: MessageFns<ProcessedClaimData> = {
             break;
           }
 
+          message.values.push(reader.string());
+          continue;
+        }
+        case 5: {
+          if (tag !== 42) {
+            break;
+          }
+
           message.attestorAddress = reader.string();
           continue;
         }
@@ -2739,6 +2752,7 @@ export const ProcessedClaimData: MessageFns<ProcessedClaimData> = {
       claim: isSet(object.claim) ? ProviderClaimData.fromJSON(object.claim) : undefined,
       signature: isSet(object.signature) ? bytesFromBase64(object.signature) : new Uint8Array(0),
       outputs: globalThis.Array.isArray(object?.outputs) ? object.outputs.map((e: any) => OutputSpec.fromJSON(e)) : [],
+      values: globalThis.Array.isArray(object?.values) ? object.values.map((e: any) => globalThis.String(e)) : [],
       attestorAddress: isSet(object.attestorAddress) ? globalThis.String(object.attestorAddress) : "",
     };
   },
@@ -2753,6 +2767,9 @@ export const ProcessedClaimData: MessageFns<ProcessedClaimData> = {
     }
     if (message.outputs?.length) {
       obj.outputs = message.outputs.map((e) => OutputSpec.toJSON(e));
+    }
+    if (message.values?.length) {
+      obj.values = message.values;
     }
     if (message.attestorAddress !== "") {
       obj.attestorAddress = message.attestorAddress;
@@ -2770,6 +2787,7 @@ export const ProcessedClaimData: MessageFns<ProcessedClaimData> = {
       : undefined;
     message.signature = object.signature ?? new Uint8Array(0);
     message.outputs = object.outputs?.map((e) => OutputSpec.fromPartial(e)) || [];
+    message.values = object.values?.map((e) => e) || [];
     message.attestorAddress = object.attestorAddress ?? "";
     return message;
   },

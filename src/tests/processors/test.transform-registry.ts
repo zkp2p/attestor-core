@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals'
-import { TransformType } from 'src/types/declarative-processor'
+import { TransformType } from 'src/types/processor'
 import {
 	getTransform,
 	getTransformNames,
@@ -847,6 +847,55 @@ describe('Transform Registry', () => {
 		})
 	})
 
+	describe('CONSTANT Transform', () => {
+		it('should return constant string values', () => {
+			const transform = transformRegistry[TransformType.CONSTANT]
+			
+			expect(transform(null, { value: 'USD' })).toBe('USD')
+			expect(transform('ignored', { value: 'ETH' })).toBe('ETH')
+			expect(transform(123, { value: 'CONSTANT_VALUE' })).toBe('CONSTANT_VALUE')
+		})
+
+		it('should convert non-string values to strings', () => {
+			const transform = transformRegistry[TransformType.CONSTANT]
+			
+			expect(transform(null, { value: 42 })).toBe('42')
+			expect(transform(null, { value: true })).toBe('true')
+			expect(transform(null, { value: false })).toBe('false')
+			expect(transform(null, { value: 3.14 })).toBe('3.14')
+		})
+
+		it('should handle complex values', () => {
+			const transform = transformRegistry[TransformType.CONSTANT]
+			
+			// Objects are stringified
+			expect(transform(null, { value: { key: 'value' } })).toBe('{"key":"value"}')
+			expect(transform(null, { value: [1, 2, 3] })).toBe('[1,2,3]')
+			
+			// Ethereum address
+			expect(transform(null, { value: '0x742d35Cc6634C0532925a3b844Bc9e7595f62a3C' }))
+				.toBe('0x742d35Cc6634C0532925a3b844Bc9e7595f62a3C')
+		})
+
+		it('should require value parameter', () => {
+			const transform = transformRegistry[TransformType.CONSTANT]
+			
+			expect(() => transform(null, {}))
+				.toThrow('constant transform requires "value" parameter')
+			expect(() => transform(null, { value: undefined }))
+				.toThrow('constant transform requires "value" parameter')
+		})
+
+		it('should handle null and empty string as valid values', () => {
+			const transform = transformRegistry[TransformType.CONSTANT]
+			
+			// null value becomes empty string
+			expect(transform(null, { value: null })).toBe('')
+			// empty string is valid
+			expect(transform(null, { value: '' })).toBe('')
+		})
+	})
+
 	describe('Registry Functions', () => {
 		it('should list all transform names', () => {
 			const names = getTransformNames()
@@ -855,8 +904,9 @@ describe('Transform Registry', () => {
 			expect(names).toContain(TransformType.PARSE_TIMESTAMP)
 			expect(names).toContain(TransformType.ASSERT_EQUALS)
 			expect(names).toContain(TransformType.TEMPLATE)
-			// We now have 15 transforms after removing SHA3 and TO_UNIX_SECONDS
-			expect(names.length).toBeGreaterThanOrEqual(15)
+			expect(names).toContain(TransformType.CONSTANT)
+			// We now have 16 transforms after adding CONSTANT
+			expect(names.length).toBeGreaterThanOrEqual(16)
 		})
 	})
 })

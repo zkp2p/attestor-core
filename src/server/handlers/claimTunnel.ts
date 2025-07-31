@@ -1,6 +1,6 @@
 import { MAX_CLAIM_TIMESTAMP_DIFF_S } from 'src/config'
 import { ClaimTunnelResponse } from 'src/proto/api'
-import { DeclarativeExecutor } from 'src/server/processors/declarative-executor'
+import { Executor } from 'src/server/processors/executor'
 import { getApm } from 'src/server/utils/apm'
 import { assertTranscriptsMatch, assertValidClaimRequest } from 'src/server/utils/assert-valid-claim-request'
 import { getAttestorAddress, signAsAttestor } from 'src/server/utils/generics'
@@ -85,7 +85,7 @@ export const claimTunnel: RPCHandler<'claimTunnel'> = async(
 					// Parse the processor configuration
 					const processor = JSON.parse(processorJson)
 
-					const processedData = await DeclarativeExecutor.processClaim(
+					const processedData = await Executor.processClaim(
 						{
 							claim: res.claim,
 							processor
@@ -104,6 +104,7 @@ export const claimTunnel: RPCHandler<'claimTunnel'> = async(
 						claim: processedData.claim,
 						signature: processedData.signature,
 						outputs: processedData.outputs,
+						values: processedData.values,
 						attestorAddress: processedData.attestorAddress
 					}
 				} catch(err) {

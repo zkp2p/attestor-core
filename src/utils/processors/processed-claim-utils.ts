@@ -1,5 +1,5 @@
 import { utils } from 'ethers'
-import { DeclarativeProcessor, OutputSpec } from 'src/types/declarative-processor'
+import { Processor, OutputSpec } from 'src/types/processor'
 import { canonicalStringify } from 'src/utils/claims'
 
 /**
@@ -18,12 +18,12 @@ function strToUint8Array(str: string): Uint8Array {
  * a simple whitelist of approved processor-provider pairs
  *
  * @param providerHash Hash of the provider template/schema
- * @param processor The declarative processor
+ * @param processor The processor (may include version)
  * @returns Single hash binding processor to provider
  */
 export function createProcessorProviderHash(
 	providerHash: string,
-	processor: DeclarativeProcessor
+	processor: Processor & { version?: string }
 ): string {
 	const processorStr = canonicalStringify(processor)
 	const processorHash = utils.keccak256(strToUint8Array(processorStr)).toLowerCase()

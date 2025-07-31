@@ -1,6 +1,6 @@
 import jsonpath from 'jsonpath'
 import { ProviderClaimData } from 'src/proto/api'
-import { DeclarativeProcessor, TransformOperation } from 'src/types/declarative-processor'
+import { Processor, TransformOperation } from 'src/types/processor'
 import { getTransform } from 'src/utils/processors/transform-registry'
 
 /**
@@ -21,10 +21,10 @@ export function createClaimData(proof: any): ProviderClaimData {
 
 /**
  * Test helper to execute a processor and extract values
- * This replicates the internal logic of DeclarativeExecutor for testing
+ * This replicates the internal logic of Executor for testing
  */
 export async function executeProcessorForTest(
-	processor: DeclarativeProcessor,
+	processor: Processor,
 	claim: ProviderClaimData
 ): Promise<{ values: any[] }> {
 	// Parse claim data
@@ -49,18 +49,45 @@ export async function executeProcessorForTest(
 	const extracted: Record<string, any> = {}
 	for(const [varName, jsonPath] of Object.entries(processor.extract)) {
 		const results = jsonpath.query(claimData, jsonPath)
-		extracted[varName] = results.length > 0 ? results[0] : undefined
+		const value = results.length > 0 ? results[0] : undefined
+		if(value === undefined) {
+			throw new Error(`Value extraction failed for '${varName}' using JSONPath '${jsonPath}'`)
+		}
+		extracted[varName] = value
 	}
 
 	// Apply transforms
 	const transformed: Record<string, any> = {}
 	if(processor.transform) {
 		for(const [varName, rule] of Object.entries(processor.transform)) {
+			// Handle string constants
+			if(typeof rule === 'string') {
+				transformed[varName] = rule
+				continue
+			}
+
 			let value: any
 			if(rule.input) {
 				value = transformed[rule.input] ?? extracted[rule.input]
+				if(value === undefined) {
+					throw new Error(`Transform input '${rule.input}' for variable '${varName}' is undefined`)
+				}
 			} else if(rule.inputs) {
-				value = rule.inputs.map(inputName => transformed[inputName] ?? extracted[inputName] ?? '')
+				value = rule.inputs.map(inputName => {
+					const val = transformed[inputName] ?? extracted[inputName]
+					if(val === undefined) {
+						throw new Error(`Transform input '${inputName}' for variable '${varName}' is undefined`)
+					}
+					return val
+				})
+			} else {
+				// Check if this is a CONSTANT transform
+				const firstOp = rule.ops[0]
+				const isConstantOp = typeof firstOp === 'object' && firstOp.type === 'constant'
+				if(!isConstantOp) {
+					throw new Error(`Transform rule for '${varName}' has no input or inputs specified`)
+				}
+				value = null // CONSTANT transform doesn't need input
 			}
 
 			for(const op of rule.ops) {
