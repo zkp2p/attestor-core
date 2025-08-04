@@ -172,11 +172,6 @@ export const transformRegistry: TransformRegistry = {
 	[TransformType.SUBSTRING]: (value, params) => {
 		const str = safeToString(value)
 		const { start = 0, end } = params || {}
-
-		if(start < 0 || (end !== undefined && end < start)) {
-			throw new Error('Invalid substring indices')
-		}
-
 		return str.substring(start, end)
 	},
 
@@ -195,23 +190,29 @@ export const transformRegistry: TransformRegistry = {
 			return result
 		}
 
+		// Check if pattern should be treated as regex
+		let isRegex = false
+		let regexPattern = pattern
+
 		if(pattern.startsWith('/') && pattern.endsWith('/')) {
+			// Pattern wrapped in slashes (e.g., /regex/)
 			const lastSlash = pattern.lastIndexOf('/')
-			const regexPattern = pattern.slice(1, lastSlash)
+			regexPattern = pattern.slice(1, lastSlash)
+			isRegex = true
+		} else if(pattern.match(/^[[\\\^$.|?*+()]/)) {
+			// Pattern starts with regex metacharacter
+			isRegex = true
+		}
+
+		if(isRegex) {
 			try {
 				const regex = makeRegex(regexPattern)
 				return checkLength(str.replace(regex, replacement))
 			} catch(err) {
 				throw new Error(`Invalid regex pattern: ${regexPattern}`)
 			}
-		} else if(pattern.match(/^[[\\\^$.|?*+()]/)) {
-			try {
-				const regex = makeRegex(pattern)
-				return checkLength(str.replace(regex, replacement))
-			} catch(err) {
-				throw new Error(`Invalid regex pattern: ${pattern}`)
-			}
 		} else {
+			// Literal string replacement
 			return checkLength(global ? str.replaceAll(pattern, replacement) : str.replace(pattern, replacement))
 		}
 	},
@@ -266,52 +267,40 @@ export const transformRegistry: TransformRegistry = {
 		return '0x' + createHash('sha256').update(toUint8Array(value)).digest('hex')
 	},
 
-	[TransformType.PARSE_TIMESTAMP]: (value, params) => {
-		const { format } = params || {}
-
-		if(format) {
-			if(format === 'YYYY-MM-DDTHH:MM:SS' && !value.match(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}/)) {
-				throw new Error(`Date "${value}" does not match format ${format}`)
-			}
-
-			if(format === 'YYYY-MM-DD' && !value.match(/^\d{4}-\d{2}-\d{2}$/)) {
-				throw new Error(`Date "${value}" does not match format ${format}`)
-			}
-		}
-
+	[TransformType.PARSE_TIMESTAMP]: (value) => {
 		return String(parseTimestampSmart(value))
 	},
 
 	[TransformType.ASSERT_EQUALS]: (value, params) => {
-		const { expected, message } = params || {}
+		const { expected } = params || {}
 		if(value !== expected) {
-			throw new Error(message || 'Assertion failed: values do not match')
+			throw new Error('Assertion failed: values do not match')
 		}
 
 		return value
 	},
 
 	[TransformType.ASSERT_ONE_OF]: (value, params) => {
-		const { values, message } = params || {}
+		const { values } = params || {}
 		if(!values || !Array.isArray(values)) {
 			throw new Error('assertOneOf requires "values" array parameter')
 		}
 
 		if(!values.includes(value)) {
-			throw new Error(message || 'Assertion failed: value not in allowed list')
+			throw new Error('Assertion failed: value not in allowed list')
 		}
 
 		return value
 	},
 
 	[TransformType.VALIDATE]: (value, params) => {
-		const { condition, message } = params || {}
+		const { condition } = params || {}
 		if(!condition) {
 			throw new Error('validate requires "condition" parameter')
 		}
 
 		if(!evaluateCondition(value, condition)) {
-			throw new Error(message || 'Validation failed')
+			throw new Error('Validation failed')
 		}
 
 		return value

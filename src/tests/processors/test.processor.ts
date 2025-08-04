@@ -523,7 +523,7 @@ describe('Processor System', () => {
 					ServiceSignatureType.SERVICE_SIGNATURE_TYPE_ETH,
 					logger
 				)
-			).rejects.toThrow('Amount must be 200.00')
+			).rejects.toThrow('Assertion failed: values do not match')
 		})
 
 		it('should preserve error details through the full flow', async() => {
