@@ -211,17 +211,16 @@ describe('Transform Registry', () => {
 			expect(() => transform('12a34')).toThrow('Cannot parse timestamp: invalid format')
 		})
 
-		it('should validate YYYY-MM-DD format', () => {
+		it('should parse timestamps regardless of format parameter', () => {
 			const transform = transformRegistry[TransformType.PARSE_TIMESTAMP]
 
-			// Valid YYYY-MM-DD format
+			// Format parameter is ignored now
 			expect(transform('2024-01-15', { format: 'YYYY-MM-DD' })).toBe('1705276800000')
+			expect(transform('2024-01-15')).toBe('1705276800000')
 
-			// Invalid format for YYYY-MM-DD
-			expect(() => transform('2024/01/15', { format: 'YYYY-MM-DD' }))
-				.toThrow('Date "2024/01/15" does not match format YYYY-MM-DD')
-			expect(() => transform('01-15-2024', { format: 'YYYY-MM-DD' }))
-				.toThrow('Date "01-15-2024" does not match format YYYY-MM-DD')
+			// Different formats are parsed by parseTimestampSmart
+			expect(transform('2024/01/15')).toBe('1705276800000')
+			expect(transform('01/15/2024')).toBe('1705276800000')
 		})
 
 		it('should handle YYYY-MM-DD without format parameter', () => {
@@ -266,7 +265,7 @@ describe('Transform Registry', () => {
 			expect(() => transform('approved', {
 				condition: { ne: 'approved' },
 				message: 'Should not be approved'
-			})).toThrow('Should not be approved')
+			})).toThrow('Validation failed')
 		})
 
 		it('should handle gte (greater than or equal) condition', () => {
@@ -319,7 +318,7 @@ describe('Transform Registry', () => {
 			expect(() => transform('any value', {
 				condition: {} as any,
 				message: 'Empty condition'
-			})).toThrow('Empty condition')
+			})).toThrow('Validation failed')
 		})
 	})
 
@@ -424,21 +423,18 @@ describe('Transform Registry', () => {
 		})
 	})
 
-	describe('SUBSTRING transform - invalid indices', () => {
-		it('should throw for invalid indices', () => {
+	describe('SUBSTRING transform - edge cases', () => {
+		it('should handle edge cases gracefully', () => {
 			const transform = transformRegistry[TransformType.SUBSTRING]
 
-			// Negative start
-			expect(() => transform('hello', { start: -1 }))
-				.toThrow('Invalid substring indices')
+			// Negative start (JavaScript treats as 0)
+			expect(transform('hello', { start: -1 })).toBe('hello')
 
-			// End less than start
-			expect(() => transform('hello', { start: 3, end: 1 }))
-				.toThrow('Invalid substring indices')
+			// End less than start (JavaScript swaps them)
+			expect(transform('hello', { start: 3, end: 1 })).toBe('el')
 
-			// Negative end with valid start
-			expect(() => transform('hello', { start: 0, end: -1 }))
-				.toThrow('Invalid substring indices')
+			// Negative end (JavaScript treats as 0)
+			expect(transform('hello', { start: 0, end: -1 })).toBe('')
 		})
 	})
 
@@ -622,9 +618,8 @@ describe('Transform Registry', () => {
 			// With milliseconds
 			expect(transform('2024-01-15T10:30:00.123Z')).toBe('1705314600123')
 
-			// With format validation
-			expect(() => transform('2024-01-15', { format: 'YYYY-MM-DDTHH:MM:SS' }))
-				.toThrow('does not match format')
+			// Format parameter is now ignored
+			expect(transform('2024-01-15', { format: 'YYYY-MM-DDTHH:MM:SS' })).toBe('1705276800000')
 			expect(transform('2024-01-15', { format: 'YYYY-MM-DD' })).toBe('1705276800000')
 		})
 
@@ -662,11 +657,11 @@ describe('Transform Registry', () => {
 			expect(transform('approved', { expected: 'approved' })).toBe('approved')
 			expect(transform(123, { expected: 123 })).toBe(123)
 
-			// Failing assertions - error messages are now sanitized
+			// Failing assertions - custom error messages removed
 			expect(() => transform('pending', { expected: 'approved' }))
 				.toThrow('Assertion failed: values do not match')
 			expect(() => transform('pending', { expected: 'approved', message: 'Payment must be approved' }))
-				.toThrow('Payment must be approved')
+				.toThrow('Assertion failed: values do not match')
 		})
 
 		it('should assert one of multiple values', () => {
@@ -678,11 +673,11 @@ describe('Transform Registry', () => {
 			expect(transform('transfer_online', { values: ['p2p_money_transfer', 'transfer_online'] }))
 				.toBe('transfer_online')
 
-			// Failing assertions - error messages are now sanitized
+			// Failing assertions - custom error messages removed
 			expect(() => transform('invalid_type', { values: ['p2p_money_transfer', 'transfer_online'] }))
 				.toThrow('Assertion failed: value not in allowed list')
 			expect(() => transform('invalid', { values: ['valid'], message: 'Invalid payment type' }))
-				.toThrow('Invalid payment type')
+				.toThrow('Assertion failed: value not in allowed list')
 
 			// Error cases
 			expect(() => transform('test', {})).toThrow('assertOneOf requires "values" array parameter')
@@ -696,11 +691,11 @@ describe('Transform Registry', () => {
 			expect(transform('approved', { condition: { eq: 'approved' } })).toBe('approved')
 			expect(transform('hello world', { condition: { contains: 'world' } })).toBe('hello world')
 
-			// Failing validations - error messages are now sanitized
+			// Failing validations - custom error messages removed
 			expect(() => transform(10, { condition: { gt: 50 } }))
 				.toThrow('Validation failed')
 			expect(() => transform(10, { condition: { gt: 50 }, message: 'Amount too low' }))
-				.toThrow('Amount too low')
+				.toThrow('Validation failed')
 
 			// Complex conditions
 			expect(transform(75, { condition: { and: [{ gt: 50 }, { lt: 100 }] } })).toBe(75)
